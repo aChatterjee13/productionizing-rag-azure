@@ -1,0 +1,344 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Bumping this needs `engines.node` in web/package.json to stay satisfiable;
+  # test_ops_wiring.py reads the number straight out of this file and compares.
+  NODE_VERSION: "20"
+  PYTHON_VERSION: "3.13"
+  QDRANT_IMAGE: qdrant/qdrant:v1.12.4
+  UV_VERSION: "0.11.19"
+  # Keep the resolver honest: CI must fail on a stale lockfile rather than
+  # silently resolving something the developer never saw.
+  UV_FROZEN: "1"
+
+jobs:
+  # --------------------------------------------------------------------- lint
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Install workspace
+        run: uv sync --all-packages --all-groups
+
+      - name: ruff check
+        run: uv run ruff check --output-format=github .
+
+      - name: ruff format --check
+        run: uv run ruff format --check .
+
+  # --------------------------------------------------------------------- test
+  test:
+    name: pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: rag
+          POSTGRES_PASSWORD: rag
+          POSTGRES_DB: rag
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rag"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+      qdrant:
+        image: qdrant/qdrant:v1.12.4
+        ports:
+          - 6333:6333
+          - 6334:6334
+
+    env:
+      RAG_ENV: local
+      RAG_QDRANT_URL: http://localhost:6333
+      RAG_POSTGRES_HOST: localhost
+      RAG_POSTGRES_PORT: "5432"
+      RAG_POSTGRES_USER: rag
+      RAG_POSTGRES_PASSWORD: rag
+      RAG_POSTGRES_DB: rag
+      RAG_POSTGRES_SSLMODE: disable
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Install workspace
+        run: uv sync --all-packages --all-groups
+
+      - name: Cache FastEmbed model weights
+        uses: actions/cache@v4
+        with:
+          # bge-m3 and the reranker are hundreds of MB; downloading them on every
+          # run is the single slowest thing this job would otherwise do.
+          path: |
+            .cache
+            ~/.cache/fastembed
+          key: fastembed-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          restore-keys: fastembed-${{ runner.os }}-
+
+      - name: Wait for Qdrant
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl -sSf http://localhost:6333/readyz >/dev/null 2>&1; then
+              echo "qdrant ready after ${attempt}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "qdrant did not become ready" >&2
+          curl -sS http://localhost:6333/readyz || true
+          exit 1
+
+      - name: Apply migrations
+        run: uv run alembic -c packages/ragcore/ragcore/db/alembic.ini upgrade head
+
+      - name: Create Qdrant collections and payload indexes
+        run: uv run python scripts/bootstrap_qdrant.py
+
+      - name: pytest
+        run: |
+          uv run pytest \
+            --cov=packages/ragcore/ragcore \
+            --cov=services/api/app \
+            --cov=services/ingestion/ingestion \
+            --cov-report=xml \
+            --cov-report=term-missing:skip-covered \
+            --cov-fail-under=70 \
+            --junitxml=junit.xml
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: |
+            coverage.xml
+            junit.xml
+          if-no-files-found: warn
+
+  # -------------------------------------------------------------------- bicep
+  bicep:
+    name: bicep build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Bicep CLI
+        run: |
+          curl -sSLo bicep https://github.com/Azure/bicep/releases/latest/download/bicep-linux-x64
+          chmod +x bicep
+          sudo mv bicep /usr/local/bin/bicep
+          bicep --version
+
+      - name: Build main.bicep (linter warnings included)
+        run: |
+          bicep build infra/azure/main.bicep --stdout > /dev/null 2> bicep.log
+          cat bicep.log
+
+      - name: Build parameter files
+        run: |
+          shopt -s nullglob
+          for param in infra/azure/params/*.bicepparam; do
+            echo "building ${param}"
+            bicep build-params "${param}" --stdout > /dev/null
+          done
+
+      - name: Fail on Bicep linter warnings
+        run: |
+          if [ -s bicep.log ]; then
+            echo "::error::bicep emitted warnings; treat them as errors" >&2
+            cat bicep.log >&2
+            exit 1
+          fi
+
+      - name: Shellcheck deploy.sh
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck
+          shellcheck infra/azure/deploy.sh
+
+  # ---------------------------------------------------------------------- web
+  web:
+    name: web typecheck + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck --if-present
+
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Build
+        run: npm run build
+
+  # --------------------------------------------------------------------- eval
+  eval:
+    name: golden-set gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    needs: [lint, test]
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: rag
+          POSTGRES_PASSWORD: rag
+          POSTGRES_DB: rag
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rag"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+
+      qdrant:
+        image: qdrant/qdrant:v1.12.4
+        ports:
+          - 6333:6333
+          - 6334:6334
+
+    env:
+      RAG_ENV: local
+      RAG_QDRANT_URL: http://localhost:6333
+      RAG_POSTGRES_HOST: localhost
+      RAG_POSTGRES_PORT: "5432"
+      RAG_POSTGRES_USER: rag
+      RAG_POSTGRES_PASSWORD: rag
+      RAG_POSTGRES_DB: rag
+      RAG_POSTGRES_SSLMODE: disable
+      RAG_ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # A pull request from a fork cannot read repository secrets, so the gate
+      # cannot run there. Every other keyless run is a misconfiguration and must
+      # fail loudly rather than report a green tick it did not earn.
+      - name: Decide whether the gate can run
+        id: gate
+        env:
+          IS_FORK: ${{ github.event.pull_request.head.repo.fork }}
+        run: |
+          if [ -n "${RAG_ANTHROPIC_API_KEY}" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif [ "${IS_FORK}" = "true" ]; then
+            echo "::notice::ANTHROPIC_API_KEY is unavailable to forked pull requests; skipping the gate"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::ANTHROPIC_API_KEY is not configured; the gate cannot run" >&2
+            exit 1
+          fi
+
+      - name: Install uv
+        if: steps.gate.outputs.run == 'true'
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+
+      - name: Install workspace
+        if: steps.gate.outputs.run == 'true'
+        run: uv sync --all-packages --all-groups
+
+      - name: Cache FastEmbed model weights
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache
+            ~/.cache/fastembed
+          key: fastembed-${{ runner.os }}-${{ hashFiles('uv.lock') }}
+          restore-keys: fastembed-${{ runner.os }}-
+
+      - name: Wait for Qdrant
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl -sSf http://localhost:6333/readyz >/dev/null 2>&1; then
+              echo "qdrant ready after ${attempt}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "qdrant did not become ready" >&2
+          exit 1
+
+      - name: Apply migrations
+        if: steps.gate.outputs.run == 'true'
+        run: uv run alembic -c packages/ragcore/ragcore/db/alembic.ini upgrade head
+
+      - name: Create Qdrant collections and payload indexes
+        if: steps.gate.outputs.run == 'true'
+        run: uv run python scripts/bootstrap_qdrant.py
+
+      - name: Seed the demo tenant
+        if: steps.gate.outputs.run == 'true'
+        run: uv run python scripts/seed_demo_tenant.py --purge
+
+      - name: Run the golden set and apply the gate
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          uv run python -m eval.run \
+            --golden "${RAG_EVAL_GOLDEN_PATH:-services/eval/golden/golden_set.yaml}" \
+            --gate
+
+      - name: Upload the evaluation report
+        if: always() && steps.gate.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-reports
+          path: services/eval/reports
+          if-no-files-found: warn

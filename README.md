@@ -6,12 +6,16 @@ Azure Functions, an agentic FastAPI chat surface backed by Anthropic Claude, and
 React client.
 
 **Status.** The retrieval, guardrail, context, memory, tool, ingestion and API layers
-are implemented and unit-tested (632 tests, all in-process, ~9 s). Four things are
-known-broken or scaffolded and are called out where they matter:
-`make bootstrap` / `make seed` / `make smoke` point at filenames that do not exist,
-the evaluation gate cannot resolve its pipeline target, `/metrics` serves nothing
-because `prometheus-client` is not installed, and ~122 documented tunables are
-compile-time constants rather than environment variables. See
+are implemented and unit-tested (792 tests, all in-process, ~15 s; 74 % line coverage).
+The four defects this section used to list — Makefile targets pointing at filenames
+that did not exist, the evaluation gate failing to resolve its pipeline target,
+`/metrics` serving nothing because `prometheus-client` was missing, and ~122
+documented tunables being compile-time constants — are fixed, and
+`packages/ragcore/tests/test_ops_wiring.py` now fails if any of them regresses.
+
+What still needs a live environment rather than a unit test: the golden-set gate runs
+against real Postgres, Qdrant and the Anthropic API, so it is exercised in CI (job
+`eval`) rather than locally by default. See
 [`docs/FEATURE_MAP.md`](docs/FEATURE_MAP.md) for the full production-ready vs
 scaffolded breakdown.
 
@@ -26,7 +30,7 @@ scaffolded breakdown.
 | 5 | Short-term memory and periodic suppression | A Redis-backed session window (in-process fallback) that suppresses rather than truncates: old turns fold into a rolling summary every 6 turns *and* at 75 % of budget, stale tool results are cleared with the `clear_tool_uses_20250919` context edit. |
 | 6 | Hybrid semantic + BM25 + rerank + metadata filtering | Dense `bge-m3` and sparse `Qdrant/bm25` prefetch branches fused **server-side** by the Qdrant Query API (RRF or DBSF), then simhash dedupe, `bge-reranker-v2-m3` cross-encoder, MMR and a per-document cap. |
 | 7 | React interface | Vite + React 19 + Tailwind + MSAL: streaming chat, retrieval inspector, source drawer, citation list, context meter, guardrail banner, tool trace, memory panel, admin documents/ingestion and an eval dashboard. |
-| 8 | RAGAS + semantic-similarity validation vs a golden set | 59 golden items over six categories run through the real pipeline, scored with RAGAS (or native Claude judges) plus bge-m3 cosine, gated in CI with two hard floors. **Currently cannot execute — see the caveat below.** |
+| 8 | RAGAS + semantic-similarity validation vs a golden set | 59 golden items over six categories run through the real pipeline, scored with RAGAS (or native Claude judges) plus bge-m3 cosine, gated in CI with two hard floors. Needs live Postgres, Qdrant and an API key, so it runs in CI (job `eval`) rather than in the unit suite. |
 | 9 | PII, OOD, contradictions, dedupe, citations, lineage, Langfuse | Presidio-or-regex PII with redact-before-log enforced by a structlog processor, an out-of-domain gate with score-collapse detection, recency/authority contradiction resolution that cites both sides, span-verified citations and lineage rows per turn. |
 | 10 | Query transformation | One `claude-sonnet-5` structured call produces intent, rewrite, sub-questions, HyDE passage, extracted facets and an out-of-domain flag — and never raises: every failure degrades to a documented fallback plan. |
 
@@ -129,21 +133,15 @@ make web
 uv run python scripts/smoke_test.py --base-url http://localhost:8000
 ```
 
-### Known-broken Makefile targets
+### Makefile targets
 
-`docs/CONTRACTS.md` Addendum I says the Makefile "must point at these four paths;
-earlier drafts referenced shorter names that do not exist". The Makefile still has the
-earlier draft names, so three targets fail immediately:
-
-| Target | Invokes | Actual script |
-|---|---|---|
-| `make bootstrap` | `scripts/bootstrap.py` ❌ | `scripts/bootstrap_qdrant.py` |
-| `make seed` | `scripts/seed.py` ❌ | `scripts/seed_demo_tenant.py` |
-| `make smoke` | `scripts/smoke.py` ❌ | `scripts/smoke_test.py` |
-
-`make setup`, `make up`, `make migrate`, `make api`, `make web`, `make ingest-local`,
-`make lint`, `make test` all work as written. Use the explicit `uv run python
-scripts/…` commands above until the Makefile is corrected.
+`docs/CONTRACTS.md` Addendum I pins the four script paths the Makefile must invoke;
+earlier drafts referenced shorter names that never existed, so `make bootstrap`,
+`make seed` and `make smoke` failed at the shell. They now point at
+`scripts/bootstrap_qdrant.py`, `scripts/seed_demo_tenant.py` and
+`scripts/smoke_test.py`, and `test_ops_wiring.py` fails if a target ever again names
+a script that is not a real file — including the `python -m` and `uvicorn` targets,
+which are checked by importing what they name.
 
 The first `make api` (or first ingestion run) downloads the FastEmbed weights for
 `BAAI/bge-m3`, `Qdrant/bm25` and `Xenova/bge-reranker-v2-m3` into
@@ -152,9 +150,11 @@ failure — check `GET /readyz`, not `GET /health`, for dependency state.
 
 ## Environment variables that must be set
 
-Everything is a `RAG_`-prefixed field on `ragcore.settings.Settings`; `.env.example`
-documents all 208 of them and every one is a real field. These are the ones with no
-usable default:
+Everything is a `RAG_`-prefixed field on `ragcore.settings.Settings`. `.env.example`
+documents 319 of the 359 fields, and `test_settings_tunables.py` fails if any entry
+there is not a real field — so the file never drifts into documenting a setting that
+does not exist. The 40 undocumented fields are internal defaults nobody is expected to
+override. These are the ones with no usable default:
 
 | Variable | Why |
 |---|---|
@@ -216,7 +216,7 @@ and the gate thresholds.
 
 ```bash
 make lint        # ruff check + ruff format --check   (clean)
-make test        # pytest across every workspace member (632 pass, ~9 s)
+make test        # pytest across every workspace member (792 pass, ~15 s)
 make typecheck   # mypy (not run by CI)
 ```
 
