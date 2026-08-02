@@ -34,6 +34,7 @@ from ragcore.llm.client import LLMClient, StreamEventType, get_llm_client
 from ragcore.llm.openai_compatible import (
     OpenAICompatibleClient,
     OpenAIFlavour,
+    _clear_stale_tool_results,
     _to_openai_messages,
     _to_openai_tool_choice,
     _to_openai_tools,
@@ -740,6 +741,169 @@ class TestCountTokens:
         assert await ollama.count_tokens(messages=messages) > await azure.count_tokens(
             messages=messages
         )
+
+
+class TestLocalContextEdits:
+    """`clear_tool_uses` is reproduced client-side, since OpenAI has no equivalent."""
+
+    @staticmethod
+    def conversation(turns: int, *, body_chars: int = 13) -> list[dict[str, Any]]:
+        """Build a conversation with one tool call per turn.
+
+        Args:
+            turns: How many tool-calling exchanges to produce.
+            body_chars: Roughly how long each tool result is. The default is
+                deliberately tiny; pass a realistic size when the test is about
+                tokens rather than structure.
+
+        Returns:
+            Anthropic-shaped messages, oldest first, ending on a user turn.
+        """
+        messages: list[dict[str, Any]] = []
+        for index in range(turns):
+            body = f"result body {index}".ljust(body_chars, "x")
+            messages.append({"role": "user", "content": f"question {index}"})
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": f"tu_{index}",
+                            "name": "search",
+                            "input": {"q": str(index)},
+                        }
+                    ],
+                }
+            )
+            messages.append(
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": f"tu_{index}",
+                            "content": body,
+                        }
+                    ],
+                }
+            )
+        messages.append({"role": "user", "content": "final"})
+        return messages
+
+    async def test_stale_results_are_cleared_and_recent_ones_kept(self) -> None:
+        """Only turns beyond the TTL lose their bodies."""
+        client, fake = build(completion(), context_tool_result_ttl_turns=2)
+        await client.complete(
+            messages=self.conversation(5),
+            context_management={"edits": [{"type": "clear_tool_uses_20250919"}]},
+        )
+        tools = [m for m in fake.calls[0]["messages"] if m["role"] == "tool"]
+        cleared = [m for m in tools if m["content"].startswith("[tool result cleared")]
+        kept = [m for m in tools if m["content"].startswith("result body")]
+        assert len(cleared) == 3
+        assert [m["tool_call_id"] for m in kept] == ["tu_3", "tu_4"]
+
+    async def test_cleared_results_are_replaced_not_removed(self) -> None:
+        """Every tool_call must still have an answering tool message.
+
+        Removing them would leave orphaned tool_calls, which OpenAI rejects — the
+        context saving would become a 400.
+        """
+        client, fake = build(completion(), context_tool_result_ttl_turns=1)
+        await client.complete(
+            messages=self.conversation(4),
+            context_management={"edits": [{"type": "clear_tool_uses_20250919"}]},
+        )
+        sent = fake.calls[0]["messages"]
+        call_ids = {
+            call["id"] for message in sent for call in message.get("tool_calls") or []
+        }
+        answered = {m["tool_call_id"] for m in sent if m["role"] == "tool"}
+        assert call_ids == answered
+
+    async def test_clearing_frees_tokens_on_realistic_results(self) -> None:
+        """The point of the edit is a smaller prompt.
+
+        Retrieval and API tool results run to thousands of characters, which is the
+        case worth asserting. The saving is the result body minus the placeholder,
+        so a result *shorter* than the placeholder costs a few tokens instead — see
+        the companion test.
+        """
+        messages = self.conversation(5, body_chars=4000)
+        original = _to_openai_messages(None, messages)
+        translated, cleared = _clear_stale_tool_results(
+            original, keep=1, clear_inputs=False
+        )
+        assert cleared == 4
+
+        def chars(items: list[dict[str, Any]]) -> int:
+            return sum(len(str(item.get("content") or "")) for item in items)
+
+        assert chars(translated) < chars(original) / 2
+
+    async def test_clearing_a_tiny_result_is_not_a_saving(self) -> None:
+        """Honest about the boundary: the placeholder is not free.
+
+        Nothing selects on result size, here or in Anthropic's server-side edit, so
+        a conversation of one-line tool outputs pays a few tokens rather than saving
+        them. Documented rather than special-cased, because the sizes that matter in
+        practice are three orders of magnitude larger.
+        """
+        original = _to_openai_messages(None, self.conversation(5, body_chars=5))
+        translated, _ = _clear_stale_tool_results(original, keep=1, clear_inputs=False)
+
+        def chars(items: list[dict[str, Any]]) -> int:
+            return sum(len(str(item.get("content") or "")) for item in items)
+
+        assert chars(translated) > chars(original)
+
+    async def test_clear_tool_inputs_blanks_the_arguments(self) -> None:
+        """The stronger form of the edit drops the call arguments too."""
+        client, fake = build(completion(), context_tool_result_ttl_turns=1)
+        await client.complete(
+            messages=self.conversation(3),
+            context_management={
+                "edits": [
+                    {"type": "clear_tool_uses_20250919", "clear_tool_inputs": True}
+                ]
+            },
+        )
+        sent = fake.calls[0]["messages"]
+        arguments = [
+            call["function"]["arguments"]
+            for message in sent
+            for call in message.get("tool_calls") or []
+        ]
+        assert arguments.count("{}") == 2
+        assert '{"q": "2"}' in arguments
+
+    async def test_a_short_conversation_is_untouched(self) -> None:
+        """Nothing is stale yet, so nothing changes."""
+        client, fake = build(completion(), context_tool_result_ttl_turns=5)
+        await client.complete(
+            messages=self.conversation(2),
+            context_management={"edits": [{"type": "clear_tool_uses_20250919"}]},
+        )
+        tools = [m for m in fake.calls[0]["messages"] if m["role"] == "tool"]
+        assert all(m["content"].startswith("result body") for m in tools)
+
+    async def test_no_edit_means_no_clearing(self) -> None:
+        """The edit is opt-in; an absent payload must not silently trim history."""
+        client, fake = build(completion(), context_tool_result_ttl_turns=1)
+        await client.complete(messages=self.conversation(4))
+        tools = [m for m in fake.calls[0]["messages"] if m["role"] == "tool"]
+        assert all(m["content"].startswith("result body") for m in tools)
+
+    async def test_an_unknown_edit_is_ignored(self) -> None:
+        """Compaction cannot be reproduced locally and must not half-apply."""
+        client, fake = build(completion(), context_tool_result_ttl_turns=1)
+        await client.complete(
+            messages=self.conversation(4),
+            context_management={"edits": [{"type": "compact_20260112"}]},
+        )
+        tools = [m for m in fake.calls[0]["messages"] if m["role"] == "tool"]
+        assert all(m["content"].startswith("result body") for m in tools)
 
 
 # ---------------------------------------------------------------------- wiring

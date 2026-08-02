@@ -6,7 +6,7 @@ Azure Functions, an agentic FastAPI chat surface backed by Anthropic Claude,
 Azure OpenAI or Ollama, and a React client.
 
 **Status.** The retrieval, guardrail, context, memory, tool, ingestion and API layers
-are implemented and unit-tested (849 tests, all in-process, ~24 s; 74 % line coverage).
+are implemented and unit-tested (857 tests, all in-process, ~18 s; 74 % line coverage).
 The four defects this section used to list — Makefile targets pointing at filenames
 that did not exist, the evaluation gate failing to resolve its pipeline target,
 `/metrics` serving nothing because `prometheus-client` was missing, and ~122
@@ -75,7 +75,7 @@ flowchart TB
     end
 
     subgraph ext["External"]
-        ANT["Anthropic API<br/>opus-5 / sonnet-5 / haiku-4-5"]
+        ANT["LLM provider<br/>Anthropic · Azure OpenAI · Ollama"]
         LF["Langfuse"]
         KV["Key Vault + Managed Identity"]
         MCP["Remote / self-hosted MCP servers"]
@@ -148,6 +148,99 @@ The first `make api` (or first ingestion run) downloads the FastEmbed weights fo
 `RAG_EMBEDDING_CACHE_DIR` (~2.5 GB, several minutes). Startup never aborts on a
 failure — check `GET /readyz`, not `GET /health`, for dependency state.
 
+## Choosing an LLM provider
+
+`RAG_LLM_PROVIDER` selects the chat backend. Retrieval is unaffected: embeddings and
+reranking are local FastEmbed models on every provider, so switching does **not**
+touch your Qdrant collections or require re-ingestion.
+
+### Anthropic (default)
+
+```bash
+RAG_LLM_PROVIDER=anthropic
+RAG_ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Nothing else to set. This is the only provider with extended thinking, prompt
+caching, remote MCP and context compaction, and the only one whose token counts come
+from the model's own counting endpoint.
+
+### Azure OpenAI
+
+```bash
+RAG_LLM_PROVIDER=azure_openai
+RAG_AZURE_OPENAI_ENDPOINT=https://my-resource.openai.azure.com
+RAG_AZURE_OPENAI_API_KEY=...        # omit to use managed identity
+RAG_AZURE_OPENAI_API_VERSION=2024-10-21
+
+# Aliases name *deployments*, not model families — Azure routes on deployment name.
+RAG_LLM_MODEL_ALIASES={"claude-opus-5":"gpt-4o","claude-sonnet-5":"gpt-4o-mini","claude-haiku-4-5":"gpt-4o-mini"}
+
+# Anthropic-only features must be off, or startup refuses to proceed.
+RAG_ANTHROPIC_THINKING=false
+RAG_ANTHROPIC_CACHE_SYSTEM=false
+RAG_TOOL_MCP_ENABLED=false
+RAG_CONTEXT_COMPACTION_ENABLED=false
+```
+
+### Ollama
+
+```bash
+RAG_LLM_PROVIDER=ollama
+RAG_OLLAMA_BASE_URL=http://localhost:11434     # '/v1' is appended
+RAG_LLM_MODEL_ALIASES={"claude-opus-5":"llama3.1:70b","claude-sonnet-5":"llama3.1:8b","claude-haiku-4-5":"llama3.1:8b"}
+RAG_ANTHROPIC_THINKING=false
+RAG_ANTHROPIC_CACHE_SYSTEM=false
+RAG_TOOL_MCP_ENABLED=false
+RAG_CONTEXT_COMPACTION_ENABLED=false
+```
+
+Pull the models first (`ollama pull llama3.1:8b`). Tool calling needs a model trained
+for it — `llama3.1`, `qwen2.5` and `mistral-nemo` work; many smaller models will
+simply never emit a tool call, which degrades the agentic loop to plain RAG without
+erroring.
+
+### Why the aliases are mandatory
+
+Every call site names a Claude model directly (`claude-opus-5` for generation,
+`claude-sonnet-5` for query transformation, `claude-haiku-4-5` for classification).
+Without an alias for each of the three, the request would reach Azure or Ollama as
+`claude-opus-5` and be rejected there — once per turn, forever. Settings therefore
+refuse to construct if any slot is unmapped, so the failure lands at startup instead.
+
+The same reasoning covers the four feature flags: a deployment that asks for extended
+thinking on a provider that has none would quietly do less than its configuration
+says, so that combination is refused rather than ignored. This mirrors how
+`entra_dev_mode` is refused in production.
+
+### What differs per provider
+
+| | Anthropic | Azure OpenAI | Ollama |
+|---|---|---|---|
+| Chat, streaming, tool calling | ✅ | ✅ | ✅ (model-dependent) |
+| Structured output | ✅ tool-forced | ✅ strict JSON schema | ⚠️ JSON mode + prompt |
+| Token counting | ✅ exact, via API | ✅ exact, `tiktoken` | ⚠️ approximate, padded 15 % |
+| `clear_tool_uses` context edit | ✅ server-side | ✅ applied client-side | ✅ applied client-side |
+| Extended thinking | ✅ | ❌ refused | ❌ refused |
+| Prompt caching | ✅ | ❌ refused | ❌ refused |
+| Remote MCP connector | ✅ | ❌ refused | ❌ refused |
+| Context compaction | ✅ | ❌ refused | ❌ refused |
+| Per-token cost reporting | ✅ | ✅ | ✅ zero (local) |
+
+Ollama's token count is `tiktoken` scaled by 1.15, because Llama-family tokenisers
+disagree with `o200k_base`. The context packer treats the number as a budget, so it
+is biased to over-count: that wastes a little of the window, where under-counting
+would overflow it and fail the request.
+
+`clear_tool_uses` has no OpenAI equivalent, so the provider applies it to the outgoing
+messages itself — stale tool results have their bodies replaced with a marker before
+the request is sent. They are replaced rather than removed because OpenAI rejects an
+assistant turn whose `tool_calls` have no answering `tool` message.
+
+**None of this has been exercised against a live Azure or Ollama endpoint.** The 65
+provider tests stub the SDK, so the translation layer is verified but the first real
+call is not.
+
 ## Environment variables that must be set
 
 Everything is a `RAG_`-prefixed field on `ragcore.settings.Settings`. `.env.example`
@@ -216,7 +309,7 @@ and the gate thresholds.
 
 ```bash
 make lint        # ruff check + ruff format --check   (clean)
-make test        # pytest across every workspace member (849 pass, ~24 s)
+make test        # pytest across every workspace member (857 pass, ~18 s)
 make typecheck   # mypy (not run by CI)
 ```
 

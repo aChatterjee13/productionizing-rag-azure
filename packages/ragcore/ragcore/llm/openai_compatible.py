@@ -36,11 +36,21 @@ Mistral and Qwen tokenise differently. The context packer budgets against this n
 so the approximation is deliberately biased to over-count — see
 :data:`_OLLAMA_TOKEN_SAFETY`.
 
-**What this provider does not do.** Extended thinking, context-management edits, the
-remote MCP connector and prompt caching are Anthropic features with no counterpart
-here. The parameters are accepted and ignored; :class:`ragcore.settings.Settings`
-refuses to construct when one is *enabled* against this provider, so being ignored here
-is unreachable rather than silent.
+**Context edits are performed locally.** ``clear_tool_uses`` is a server-side edit on
+Anthropic and has no OpenAI equivalent, so
+:meth:`~OpenAICompatibleClient._apply_context_edits` applies it to the outgoing
+messages instead: stale tool results have their bodies replaced before the request
+leaves. They are replaced rather than removed because OpenAI rejects an assistant turn
+whose ``tool_calls`` have no answering ``role="tool"`` message — dropping them would
+turn a context saving into a 400.
+
+**What this provider does not do.** Extended thinking, the remote MCP connector,
+prompt caching and context *compaction* are Anthropic features with no counterpart
+here. Compaction is a server-side summarisation pass, not a rewrite rule, so unlike
+``clear_tool_uses`` it cannot be reproduced locally. The parameters stay on the
+signatures and are inert; :class:`ragcore.settings.Settings` refuses to construct when
+one is *enabled* against this provider, so being inert here is unreachable rather than
+silent.
 """
 
 from __future__ import annotations
@@ -95,6 +105,15 @@ _OLLAMA_TOKEN_SAFETY = 1.15
 #: published figure for chat models; close enough that the safety factor above covers
 #: the rest.
 _TOKENS_PER_MESSAGE = 4
+
+#: Body written over a tool result the context edit cleared. Anthropic's server-side
+#: edit leaves a comparable marker; a bare empty string reads to the model as a tool
+#: that returned nothing, which is a different and misleading fact.
+_CLEARED_PLACEHOLDER = "[tool result cleared to reclaim context]"
+
+#: The edit type this provider implements locally. Anything else in a
+#: ``context_management`` payload is Anthropic-only and refused by settings.
+_CLEAR_TOOL_USES = "clear_tool_uses_20250919"
 
 #: OpenAI ``finish_reason`` to Anthropic ``stop_reason``. The orchestrator, the tool
 #: loop and the output guard all branch on the Anthropic vocabulary.
@@ -348,6 +367,69 @@ def _tool_calls_from(message: Any) -> list[dict[str, Any]]:
             }
         )
     return calls
+
+
+def _clear_stale_tool_results(
+    messages: list[dict[str, Any]],
+    *,
+    keep: int,
+    clear_inputs: bool,
+) -> tuple[list[dict[str, Any]], int]:
+    """Apply the ``clear_tool_uses`` context edit locally.
+
+    Anthropic performs this edit server-side; there is no OpenAI equivalent, so the
+    provider does it before sending. The result is that stale tool output stops
+    occupying the window on every provider, and ``context.py``'s reported "cleared"
+    count describes something that actually happened.
+
+    Content is **replaced, not removed**. OpenAI rejects a request whose assistant
+    turn has ``tool_calls`` with no answering ``role="tool"`` message, so dropping
+    the message would turn a context saving into a 400. Replacing the body keeps the
+    conversation structurally valid while freeing the tokens the body occupied — the
+    same thing the server-side edit does.
+
+    Args:
+        messages: Translated OpenAI messages, modified in place on a copy.
+        keep: How many of the most recent tool-calling turns keep their results.
+        clear_inputs: Also blank the arguments on the cleared calls, not just the
+            results.
+
+    Returns:
+        A ``(messages, cleared)`` pair, where ``cleared`` counts the results whose
+        bodies were replaced.
+    """
+    turns = [
+        index
+        for index, message in enumerate(messages)
+        if message.get("role") == "assistant" and message.get("tool_calls")
+    ]
+    if len(turns) <= max(keep, 0):
+        return messages, 0
+
+    stale_turns = turns[: len(turns) - max(keep, 0)]
+    stale_ids: set[str] = set()
+    out = [dict(message) for message in messages]
+    for index in stale_turns:
+        calls = [dict(call) for call in out[index].get("tool_calls") or []]
+        for call in calls:
+            identifier = str(call.get("id", ""))
+            if identifier:
+                stale_ids.add(identifier)
+            if clear_inputs:
+                function = dict(call.get("function") or {})
+                function["arguments"] = "{}"
+                call["function"] = function
+        out[index]["tool_calls"] = calls
+
+    cleared = 0
+    for message in out:
+        if message.get("role") != "tool":
+            continue
+        if str(message.get("tool_call_id", "")) not in stale_ids:
+            continue
+        message["content"] = _CLEARED_PLACEHOLDER
+        cleared += 1
+    return out, cleared
 
 
 def _encoding_for(model: str) -> tiktoken.Encoding:
@@ -642,6 +724,50 @@ class OpenAICompatibleClient:
             or kwargs.get("max_tokens"),
         }
 
+    def _apply_context_edits(
+        self,
+        translated: list[dict[str, Any]],
+        context_management: Mapping[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        """Honour the context edits this provider can perform locally.
+
+        Only ``clear_tool_uses`` is implementable here; compaction is a server-side
+        summarisation pass with no local equivalent, and settings refuse it against
+        this provider rather than let it be dropped.
+
+        Args:
+            translated: Messages already in OpenAI form.
+            context_management: The caller's edit payload, or None.
+
+        Returns:
+            The messages, with stale tool results cleared when asked.
+        """
+        if not context_management:
+            return translated
+        edits = context_management.get("edits") or []
+        wanted = [
+            edit
+            for edit in edits
+            if isinstance(edit, Mapping) and edit.get("type") == _CLEAR_TOOL_USES
+        ]
+        if not wanted:
+            return translated
+
+        cleared_inputs = any(edit.get("clear_tool_inputs") for edit in wanted)
+        out, cleared = _clear_stale_tool_results(
+            translated,
+            keep=self._settings.context_tool_result_ttl_turns,
+            clear_inputs=cleared_inputs,
+        )
+        if cleared:
+            _log.info(
+                "llm_tool_results_cleared",
+                provider=str(self._flavour),
+                cleared=cleared,
+                keep=self._settings.context_tool_result_ttl_turns,
+            )
+        return out
+
     def _build_request(
         self,
         *,
@@ -651,6 +777,7 @@ class OpenAICompatibleClient:
         model: str | None,
         max_tokens: int | None,
         tool_choice: Mapping[str, Any] | None,
+        context_management: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Assemble the request payload.
 
@@ -661,14 +788,16 @@ class OpenAICompatibleClient:
             model: Model override.
             max_tokens: Output cap.
             tool_choice: Tool-choice override.
+            context_management: Context edits to apply locally before sending.
 
         Returns:
             Keyword arguments for ``chat.completions.create``.
         """
         resolved = self._model(model)
+        translated = _to_openai_messages(system, _normalize_messages(messages))
         kwargs: dict[str, Any] = {
             "model": resolved,
-            "messages": _to_openai_messages(system, _normalize_messages(messages)),
+            "messages": self._apply_context_edits(translated, context_management),
             "max_completion_tokens": self._max_tokens(max_tokens),
         }
         translated = _to_openai_tools(tools)
@@ -716,7 +845,7 @@ class OpenAICompatibleClient:
         Returns:
             The parsed response.
         """
-        del mcp_servers, effort, cache_system, thinking, context_management
+        del mcp_servers, effort, cache_system, thinking
         kwargs = self._build_request(
             system=system,
             messages=messages,
@@ -724,6 +853,7 @@ class OpenAICompatibleClient:
             model=model,
             max_tokens=max_tokens,
             tool_choice=tool_choice,
+            context_management=context_management,
         )
         started = time.perf_counter()
         completion = await self._create(kwargs)
@@ -781,7 +911,7 @@ class OpenAICompatibleClient:
             Text deltas, then completed tool calls, then usage, then exactly one
             ``DONE`` carrying the assembled response.
         """
-        del mcp_servers, effort, cache_system, thinking, context_management
+        del mcp_servers, effort, cache_system, thinking
         kwargs = self._build_request(
             system=system,
             messages=messages,
@@ -789,6 +919,7 @@ class OpenAICompatibleClient:
             model=model,
             max_tokens=max_tokens,
             tool_choice=tool_choice,
+            context_management=context_management,
         )
         kwargs["max_completion_tokens"] = self._max_tokens(
             max_tokens or self._settings.anthropic_max_tokens_streaming
