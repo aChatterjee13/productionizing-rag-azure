@@ -23,6 +23,7 @@ Environment = Literal["local", "dev", "staging", "production"]
 FusionStrategy = Literal["rrf", "dbsf"]
 PIIRedactionMode = Literal["mask", "hash", "partial"]
 Effort = Literal["low", "medium", "high", "xhigh", "max"]
+LLMProviderName = Literal["anthropic", "azure_openai", "ollama"]
 ClearanceLevel = Literal["public", "internal", "confidential", "restricted"]
 
 #: Weekday indices treated as working days by default (Monday=0 ... Sunday=6).
@@ -221,6 +222,69 @@ class Settings(BaseSettings):
         description=(
             "Redis key prefix for the short-term session window. Keys are "
             "'<prefix><tenant_id>:<session_id>' — tenant first."
+        ),
+    )
+
+    # ------------------------------------------------------------- llm provider
+    llm_provider: LLMProviderName = Field(
+        default="anthropic",
+        description=(
+            "Which backend serves chat completions. 'anthropic' is the only one "
+            "supporting extended thinking, context edits, remote MCP and prompt "
+            "caching; enabling any of those against another provider is refused at "
+            "startup rather than silently ignored."
+        ),
+    )
+    llm_timeout_seconds: float = Field(
+        default=60.0,
+        gt=0,
+        description="Request timeout for the OpenAI-compatible providers.",
+    )
+    llm_max_retries: int = Field(
+        default=3,
+        ge=0,
+        description=(
+            "Retry budget for the OpenAI-compatible providers. The SDK's own retries "
+            "are disabled so this is the only one in effect."
+        ),
+    )
+    llm_model_aliases: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Map a model id a call site asks for onto the one this provider serves, "
+            "e.g. {'claude-opus-5': 'gpt-4o'}. Call sites name Claude models "
+            "directly, so without an entry the request reaches the backend unchanged "
+            "and Azure/Ollama would reject it."
+        ),
+    )
+
+    # ------------------------------------------------------------- azure openai
+    azure_openai_endpoint: str | None = Field(
+        default=None,
+        description=(
+            "Azure OpenAI resource endpoint, e.g. "
+            "'https://my-resource.openai.azure.com'. Required when "
+            "llm_provider='azure_openai'."
+        ),
+    )
+    azure_openai_api_key: str | None = Field(
+        default=None,
+        description=(
+            "Azure OpenAI key. Omit to use managed identity via the SDK's own "
+            "credential chain."
+        ),
+    )
+    azure_openai_api_version: str = Field(
+        default="2024-10-21",
+        description="Azure OpenAI REST api-version sent on every request.",
+    )
+
+    # ------------------------------------------------------------------- ollama
+    ollama_base_url: str = Field(
+        default="http://localhost:11434",
+        description=(
+            "Ollama daemon root. '/v1' is appended to reach its OpenAI-compatible "
+            "surface."
         ),
     )
 
@@ -2075,6 +2139,98 @@ class Settings(BaseSettings):
             raise ValueError(msg)
         return value
 
+    def _validate_llm_provider(self) -> None:
+        """Refuse a provider asked for a capability it does not have.
+
+        Extended thinking, prompt caching, remote MCP and context compaction are
+        Anthropic features. A deployment that switches provider without switching
+        these off would quietly do less than its configuration claims, so this fails
+        at construction instead — the same posture as ``entra_dev_mode`` in
+        production.
+
+        Raises:
+            ValueError: If an Anthropic-only feature is enabled against another
+                provider, if Azure OpenAI has no endpoint, or if a non-Anthropic
+                provider has no alias for a model slot a call site will ask for.
+        """
+        if self.llm_provider == "anthropic":
+            return
+
+        unsupported = [
+            name
+            for name, enabled in (
+                ("anthropic_thinking", self.anthropic_thinking),
+                ("anthropic_cache_system", self.anthropic_cache_system),
+                ("tool_mcp_enabled", self.tool_mcp_enabled),
+                ("context_compaction_enabled", self.context_compaction_enabled),
+            )
+            if enabled
+        ]
+        if unsupported:
+            msg = (
+                f"llm_provider={self.llm_provider!r} cannot honour "
+                f"{', '.join(sorted(unsupported))}: extended thinking, prompt "
+                "caching, remote MCP and context compaction are Anthropic-only. "
+                "Set them false, or keep llm_provider='anthropic'."
+            )
+            raise ValueError(msg)
+
+        if self.llm_provider == "azure_openai" and not self.azure_openai_endpoint:
+            msg = (
+                "azure_openai_endpoint is required when llm_provider='azure_openai': "
+                "there is no default resource to fall back to"
+            )
+            raise ValueError(msg)
+
+        # Call sites name Claude models directly, so without an alias the request
+        # would reach the backend as e.g. 'claude-opus-5' and be rejected there —
+        # at request time, one failed turn at a time, rather than here.
+        slots = {
+            "anthropic_model_main": self.anthropic_model_main,
+            "anthropic_model_fast": self.anthropic_model_fast,
+            "anthropic_model_cheap": self.anthropic_model_cheap,
+        }
+        unmapped = sorted(
+            f"{field}={model!r}"
+            for field, model in slots.items()
+            if model not in self.llm_model_aliases
+        )
+        if unmapped:
+            msg = (
+                f"llm_provider={self.llm_provider!r} needs llm_model_aliases entries "
+                f"for every model slot; missing: {', '.join(unmapped)}. Map each onto "
+                "a deployment or model this provider serves."
+            )
+            raise ValueError(msg)
+
+    @property
+    def llm_model_main(self) -> str:
+        """Model slot for answer generation and the agentic tool loop.
+
+        Returns:
+            The configured main model id, before alias mapping. The active provider
+            maps it through :attr:`llm_model_aliases`.
+        """
+        return self.anthropic_model_main
+
+    @property
+    def llm_model_fast(self) -> str:
+        """Model slot for query transformation, summarisation and extraction.
+
+        Returns:
+            The configured fast model id, before alias mapping.
+        """
+        return self.anthropic_model_fast
+
+    @property
+    def llm_model_cheap(self) -> str:
+        """Model slot for classification.
+
+        Returns:
+            The configured cheap model id, before alias mapping.
+        """
+        return self.anthropic_model_cheap
+
     @model_validator(mode="after")
     def _validate_consistency(self) -> Settings:
         """Cross-field guards that catch unsafe or self-contradicting config.
@@ -2083,9 +2239,11 @@ class Settings(BaseSettings):
             The validated settings instance.
 
         Raises:
-            ValueError: If dev auth is enabled in production, or if a derived
-                budget/limit relationship is impossible to satisfy.
+            ValueError: If dev auth is enabled in production, if a provider is asked
+                for a capability it does not have, or if a derived budget/limit
+                relationship is impossible to satisfy.
         """
+        self._validate_llm_provider()
         if self.entra_dev_mode and self.env == "production":
             msg = (
                 "entra_dev_mode=true is refused when env='production': unsigned "
@@ -2274,9 +2432,14 @@ class Settings(BaseSettings):
 
         Returns:
             A ``(input_price, output_price)`` pair in USD per million tokens.
-            Unknown models fall back to the MODEL_MAIN price so cost accounting
+            Ollama is local inference and costs nothing per token, so it reports
+            zero rather than the Anthropic fallback rate, which would otherwise make
+            a self-hosted deployment look like the most expensive one. Unknown models
+            on a paid provider fall back to the MODEL_MAIN price so cost accounting
             over-reports rather than silently reporting zero.
         """
+        if self.llm_provider == "ollama":
+            return (0.0, 0.0)
         known = self.anthropic_price_per_mtok
         if model in known:
             return known[model]

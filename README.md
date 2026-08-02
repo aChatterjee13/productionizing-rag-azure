@@ -2,11 +2,11 @@
 
 A multi-tenant, ACL-aware RAG platform built to a written interface spec
 (`docs/CONTRACTS.md`): hybrid retrieval over Qdrant, serverless delta ingestion on
-Azure Functions, an agentic FastAPI chat surface backed by Anthropic Claude, and a
-React client.
+Azure Functions, an agentic FastAPI chat surface backed by Anthropic Claude,
+Azure OpenAI or Ollama, and a React client.
 
 **Status.** The retrieval, guardrail, context, memory, tool, ingestion and API layers
-are implemented and unit-tested (792 tests, all in-process, ~15 s; 74 % line coverage).
+are implemented and unit-tested (849 tests, all in-process, ~24 s; 74 % line coverage).
 The four defects this section used to list — Makefile targets pointing at filenames
 that did not exist, the evaluation gate failing to resolve its pipeline target,
 `/metrics` serving nothing because `prometheus-client` was missing, and ~122
@@ -117,11 +117,11 @@ make up                          # waits for qdrant/postgres/redis to report hea
 # 3. schema
 make migrate                     # alembic -c packages/ragcore/ragcore/db/alembic.ini upgrade head
 
-# 4. Qdrant collections + payload indexes    ⚠ make bootstrap is broken, use this:
-uv run python scripts/bootstrap_qdrant.py
+# 4. Qdrant collections + payload indexes
+make bootstrap                   # scripts/bootstrap_qdrant.py
 
-# 5. demo tenants, personas and the golden corpus   ⚠ make seed is broken, use this:
-uv run python scripts/seed_demo_tenant.py --purge
+# 5. demo tenants, personas and the golden corpus
+make seed                        # scripts/seed_demo_tenant.py
 
 # 6. API on http://localhost:8000  (docs at /docs)
 make api
@@ -129,8 +129,8 @@ make api
 # 7. web on http://localhost:5173  (separate shell)
 make web
 
-# 8. end-to-end check incl. ACL negatives   ⚠ make smoke is broken, use this:
-uv run python scripts/smoke_test.py --base-url http://localhost:8000
+# 8. end-to-end check incl. ACL negatives
+make smoke                       # scripts/smoke_test.py
 ```
 
 ### Makefile targets
@@ -151,9 +151,9 @@ failure — check `GET /readyz`, not `GET /health`, for dependency state.
 ## Environment variables that must be set
 
 Everything is a `RAG_`-prefixed field on `ragcore.settings.Settings`. `.env.example`
-documents 319 of the 359 fields, and `test_settings_tunables.py` fails if any entry
+documents 324 of the 367 fields, and `test_settings_tunables.py` fails if any entry
 there is not a real field — so the file never drifts into documenting a setting that
-does not exist. The 40 undocumented fields are internal defaults nobody is expected to
+does not exist. The 43 undocumented fields are internal defaults nobody is expected to
 override. These are the ones with no usable default:
 
 | Variable | Why |
@@ -216,7 +216,7 @@ and the gate thresholds.
 
 ```bash
 make lint        # ruff check + ruff format --check   (clean)
-make test        # pytest across every workspace member (792 pass, ~15 s)
+make test        # pytest across every workspace member (849 pass, ~24 s)
 make typecheck   # mypy (not run by CI)
 ```
 

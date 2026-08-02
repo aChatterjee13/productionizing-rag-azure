@@ -50,6 +50,7 @@ from tenacity import (
 )
 
 from ragcore.errors import RagError
+from ragcore.llm.base import LLMProvider
 from ragcore.llm.pricing import MODEL_CHEAP, MODEL_FAST, MODEL_MAIN, pricing_for
 from ragcore.logging import get_logger
 from ragcore.observability.langfuse import Tracer, get_tracer
@@ -1672,29 +1673,48 @@ def _translate_stream_event(
     return []
 
 
-_CLIENTS: dict[tuple[Any, ...], LLMClient] = {}
+_CLIENTS: dict[tuple[Any, ...], LLMProvider] = {}
 
 
-def get_llm_client(settings: Settings | None = None) -> LLMClient:
-    """Return the process-wide client for these settings.
+def get_llm_client(settings: Settings | None = None) -> LLMProvider:
+    """Return the process-wide chat-completion client for these settings.
+
+    Dispatches on ``llm_provider``: Anthropic gets :class:`LLMClient`, Azure OpenAI
+    and Ollama share
+    :class:`~ragcore.llm.openai_compatible.OpenAICompatibleClient`. The import is
+    deferred because that module imports this one for the shared response types.
 
     Args:
         settings: Settings to build from. Defaults to the process settings.
 
     Returns:
-        A cached :class:`LLMClient`. ``Settings`` is unhashable, so the cache is
-        keyed on the fields that actually change the transport.
+        A cached client satisfying :class:`~ragcore.llm.base.LLMProvider`.
+        ``Settings`` is unhashable, so the cache is keyed on the fields that
+        actually change the transport — the provider included, so switching it in a
+        test never hands back the previous backend.
     """
     cfg = settings or get_settings()
     key: tuple[Any, ...] = (
+        cfg.llm_provider,
         cfg.anthropic_base_url,
         cfg.anthropic_api_key,
         cfg.anthropic_timeout_seconds,
         cfg.anthropic_max_retries,
+        cfg.azure_openai_endpoint,
+        cfg.azure_openai_api_key,
+        cfg.azure_openai_api_version,
+        cfg.ollama_base_url,
+        cfg.llm_timeout_seconds,
+        cfg.llm_max_retries,
     )
     client = _CLIENTS.get(key)
     if client is None:
-        client = LLMClient(cfg)
+        if cfg.llm_provider == "anthropic":
+            client = LLMClient(cfg)
+        else:
+            from ragcore.llm.openai_compatible import OpenAICompatibleClient
+
+            client = OpenAICompatibleClient(cfg)
         _CLIENTS[key] = client
     return client
 

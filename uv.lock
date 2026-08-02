@@ -3511,6 +3511,7 @@ dependencies = [
     { name = "fastembed", version = "0.7.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14' and platform_machine == 'x86_64' and sys_platform == 'darwin'" },
     { name = "fastembed", version = "0.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14' or platform_machine != 'x86_64' or sys_platform != 'darwin'" },
     { name = "langfuse" },
+    { name = "openai" },
     { name = "orjson" },
     { name = "prometheus-client" },
     { name = "pydantic" },
@@ -3521,6 +3522,7 @@ dependencies = [
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "structlog" },
     { name = "tenacity" },
+    { name = "tiktoken" },
 ]
 
 [package.optional-dependencies]
@@ -3536,6 +3538,7 @@ requires-dist = [
     { name = "asyncpg", specifier = ">=0.30" },
     { name = "fastembed", specifier = ">=0.4" },
     { name = "langfuse", specifier = ">=2.53" },
+    { name = "openai", specifier = ">=1.50" },
     { name = "orjson", specifier = ">=3.10" },
     { name = "presidio-analyzer", marker = "extra == 'pii'", specifier = ">=2.2" },
     { name = "presidio-anonymizer", marker = "extra == 'pii'", specifier = ">=2.2" },
@@ -3547,6 +3550,7 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0" },
     { name = "structlog", specifier = ">=24.4" },
     { name = "tenacity", specifier = ">=9.0" },
+    { name = "tiktoken", specifier = ">=0.8" },
 ]
 provides-extras = ["pii"]
 

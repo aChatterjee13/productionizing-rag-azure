@@ -13,6 +13,7 @@ cached prefix stays byte-stable.
 from __future__ import annotations
 
 from ragcore.llm import prompts
+from ragcore.llm.base import LLMProvider
 from ragcore.llm.client import (
     BETA_COMPACTION,
     BETA_CONTEXT_MANAGEMENT,
@@ -31,6 +32,7 @@ from ragcore.llm.client import (
     get_llm_client,
     reset_llm_client_cache,
 )
+from ragcore.llm.openai_compatible import OpenAICompatibleClient, OpenAIFlavour
 from ragcore.llm.pricing import (
     MODEL_CHEAP,
     MODEL_FAST,
@@ -55,10 +57,13 @@ __all__ = [
     "MODEL_PRICING",
     "PROMPT_VERSION",
     "LLMClient",
+    "LLMProvider",
     "LLMRefusedError",
     "LLMResponse",
     "LLMUsage",
     "ModelPricing",
+    "OpenAICompatibleClient",
+    "OpenAIFlavour",
     "StreamEvent",
     "StreamEventType",
     "clear_tool_uses_edit",
