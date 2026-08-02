@@ -1,0 +1,220 @@
+# Declarative tool registry (requirement #4).
+#
+# Copy to services/api/config/tools.yaml, or point RAG_TOOL_REGISTRY_PATH at your
+# own file. Nothing here is code: every tool is data, loaded by
+# app.rag.tools.registry and executed by app.rag.tools.rest_tool /
+# app.rag.tools.mcp_client.
+#
+# Rules the loader enforces, so a misconfiguration fails at startup rather than
+# mid-conversation:
+#
+#   * every {placeholder} in a url/query/body template must be declared in the
+#     tool's input_schema.properties - the model cannot inject an undeclared URL
+#     segment;
+#   * secrets are NEVER written here. *_secret_ref names an Azure Key Vault secret
+#     (falling back to $RAG_TOOL_SECRET_<NAME> when Key Vault is not configured);
+#   * tenant_id restricts a tool to one tenant. Omit it for a tool every tenant may
+#     use. Tenant is checked before role, so a tenant never sees another tenant's
+#     tool even when it holds every role;
+#   * allowed_roles is an Entra app-role allowlist. Empty means any role;
+#   * policy.max_classification caps what content may be forwarded. RESTRICTED is
+#     never forwarded to anything outside the platform, whatever this file says.
+#
+# The two built-in tools (search_corpus, current_context) are always registered and
+# do not appear here.
+#
+# Format note: this file stays inside the YAML subset the loader can parse without
+# PyYAML installed - block mappings, block sequences, quoted scalars and inline
+# JSON. No block scalars, anchors or multi-document files.
+
+defaults:
+  # Merged under every entry below. Keep this to `policy` only: other keys would be
+  # merged into the MCP server entries too, which reject unknown fields.
+  policy:
+    rate_limit_per_minute: 30
+    max_classification: internal
+    allow_pii_in_arguments: false
+    response_pii_scan: true
+
+tools:
+  # ---------------------------------------------------------------- bearer + GET
+  - name: order_status
+    kind: rest
+    description: "Look up the live status of a customer order by its order id. Call this when the user asks about an order that the indexed documentation cannot answer, for example current shipping state, carrier or delivery estimate. Do not use it for historical policy questions."
+    cacheable: true
+    cache_ttl_seconds: 30
+    max_result_chars: 4000
+    input_schema:
+      type: object
+      additionalProperties: false
+      required:
+        - order_id
+      properties:
+        order_id:
+          type: string
+          description: "The order identifier, for example ORD-100244."
+          pattern: "^[A-Za-z0-9_-]{3,64}$"
+    rest:
+      method: GET
+      url_template: "https://api.internal.example.com/v1/orders/{order_id}"
+      headers:
+        accept: application/json
+      auth: bearer
+      auth_secret_ref: orders-api-token
+      response_json_path: data.order
+      timeout_seconds: 15
+      verify_tls: true
+    policy:
+      timeout_seconds: 15
+      rate_limit_per_minute: 60
+      retry_attempts: 2
+
+  # ------------------------------------------------- api-key header + query args
+  - name: inventory_search
+    kind: rest
+    description: "Search live warehouse inventory by free-text product term. Call this when the user asks what is currently in stock or available; the corpus carries product descriptions but never live counts."
+    max_result_chars: 6000
+    input_schema:
+      type: object
+      additionalProperties: false
+      required:
+        - query
+      properties:
+        query:
+          type: string
+          description: "Free-text product term."
+          minLength: 2
+          maxLength: 120
+        warehouse:
+          type: string
+          description: "Optional warehouse code to restrict the search to."
+          enum:
+            - EU-WEST
+            - EU-CENTRAL
+            - APAC
+        limit:
+          type: integer
+          description: "Maximum rows to return."
+          minimum: 1
+          maximum: 50
+          default: 10
+    rest:
+      method: GET
+      url_template: "https://api.internal.example.com/v1/inventory"
+      query_template:
+        q: "{query}"
+        warehouse: "{warehouse}"
+        limit: "{limit}"
+      auth: api_key
+      auth_secret_ref: inventory-api-key
+      auth_header_name: x-api-key
+      response_json_path: "results[*]"
+      timeout_seconds: 10
+
+  # -------------------------------- OAuth2 client credentials + POST body + roles
+  - name: create_support_ticket
+    kind: rest
+    description: "Open a support ticket on the user's behalf. Only call this after the user has explicitly asked for a ticket and has confirmed the summary you are about to file. Never call it speculatively."
+    tenant_id: contoso
+    allowed_roles:
+      - rag.admin
+      - support.agent
+    max_result_chars: 2000
+    input_schema:
+      type: object
+      additionalProperties: false
+      required:
+        - subject
+        - body
+      properties:
+        subject:
+          type: string
+          description: "One-line ticket subject."
+          minLength: 4
+          maxLength: 160
+        body:
+          type: string
+          description: "Ticket description agreed with the user."
+          minLength: 10
+        priority:
+          type: string
+          description: "Ticket priority."
+          enum:
+            - low
+            - normal
+            - high
+          default: normal
+    rest:
+      method: POST
+      url_template: "https://tickets.internal.example.com/api/v2/tickets"
+      headers:
+        content-type: application/json
+      body_template:
+        subject: "{subject}"
+        description: "{body}"
+        priority: "{priority}"
+        source: rag-assistant
+      auth: entra_obo
+      auth_scope: "api://tickets-internal/.default"
+      response_json_path: ticket.id
+      timeout_seconds: 20
+    policy:
+      require_admin: false
+      rate_limit_per_minute: 6
+      max_classification: confidential
+
+mcp_servers:
+  # ------------------------------------------- (a) remote: Anthropic connects out
+  # Rendered as the mcp_servers + mcp_toolset pair on the beta endpoint with the
+  # mcp-client-2025-11-20 beta. Requires RAG_TOOL_MCP_ENABLED=true.
+  - name: knowledge_ops
+    transport: remote
+    url: "https://mcp.partner.example.com/mcp"
+    authorization_token_ref: knowledge-ops-mcp-token
+    description: "Partner knowledge-operations MCP server. Exposes runbook lookup and on-call rotation queries that are not part of the indexed corpus."
+    allowed_tools:
+      - runbook_lookup
+      - oncall_for_service
+    allowed_roles:
+      - rag.admin
+      - ops.engineer
+    policy:
+      rate_limit_per_minute: 20
+      max_classification: internal
+
+  # ---------------------- (b) self-hosted, streamable HTTP: we hold the connection
+  # Inside the VNet, so Anthropic cannot reach it. Discovered and invoked locally
+  # through the official mcp Python SDK.
+  - name: vnet_incidents
+    transport: streamable_http
+    url: "https://mcp.internal.example.com/mcp"
+    authorization_token_ref: vnet-incidents-mcp-token
+    description: "Live incident and change-record lookup inside the corporate VNet."
+    allowed_tools:
+      - incident_by_id
+      - open_incidents_for_service
+    timeout_seconds: 20
+    policy:
+      rate_limit_per_minute: 20
+      max_classification: confidential
+
+  # -------------------------------------------- (b) self-hosted, stdio child proc
+  - name: finance_ledger
+    transport: stdio
+    command: uv
+    args:
+      - run
+      - --directory
+      - /opt/mcp/finance-ledger
+      - finance-ledger-mcp
+    env:
+      LEDGER_PROFILE: readonly
+    description: "Read-only ledger queries served by a co-located MCP process."
+    tenant_id: contoso
+    allowed_roles:
+      - finance.analyst
+    enabled: false
+    policy:
+      rate_limit_per_minute: 10
+      max_classification: confidential
+      require_admin: false

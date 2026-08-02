@@ -1,0 +1,59 @@
+[project]
+name = "rag-ingestion"
+version = "0.1.0"
+description = "Serverless multi-tenant delta ingestion for the productionizing-rag platform"
+readme = "../../README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "ragcore",
+
+    # --- Azure Functions host + Durable Functions
+    "azure-functions>=1.21",
+    "azure-functions-durable>=1.2.10",
+
+    # --- Azure data plane (blob connector, manifest store, Key Vault secret refs)
+    "azure-core>=1.32",
+    "azure-identity>=1.19",
+    "azure-storage-blob>=12.24",
+    "azure-keyvault-secrets>=4.9",
+
+    # --- SharePoint / OneDrive via Microsoft Graph
+    "msal>=1.31",
+
+    # --- HTTP crawler
+    "httpx>=0.28",
+    "defusedxml>=0.7.1",
+
+    # --- SQL source
+    "sqlalchemy[asyncio]>=2.0",
+
+    # --- document parsers
+    "pypdf>=5.1",
+    "pdfplumber>=0.11",
+    "python-docx>=1.1",
+    "python-pptx>=1.0",
+    "openpyxl>=3.1",
+    "selectolax>=0.3.21",
+    "beautifulsoup4>=4.12",
+
+    # --- shared runtime
+    "anyio>=4.6",
+    "pydantic>=2.9",
+    "python-dateutil>=2.9",
+    "qdrant-client>=1.12",
+]
+
+[project.optional-dependencies]
+# Drivers for SQL sources other than PostgreSQL. The connector refuses a sync
+# driver outright, so anything added here must be an asyncio dialect.
+mysql = ["aiomysql>=0.2"]
+mssql = ["aioodbc>=0.5"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# function_app.py is the Functions host entry point and is deliberately *not*
+# packaged: the host loads it from the deployment root, not from site-packages.
+packages = ["ingestion"]

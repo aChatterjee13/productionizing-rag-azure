@@ -1,0 +1,105 @@
+{
+  "_comment": [
+    "Copy to local.settings.json (git-ignored) and fill in.",
+    "",
+    "Three settings are consumed as Functions BINDING EXPRESSIONS and must exist as",
+    "app settings, not only in .env, or the host refuses to index the functions:",
+    "  RAG_INGEST_CRON            -> ingest_timer schedule (six-field NCRONTAB)",
+    "  RAG_AZURE_BLOB_CONTAINER   -> ingest_blob trigger path",
+    "  RAG_AZURE_STORAGE_QUEUE_NAME -> ingest_retry queue name",
+    "",
+    "Everything else is read by ragcore.settings (env prefix RAG_) and may equally",
+    "come from .env, App Configuration or Key Vault references."
+  ],
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "FUNCTIONS_EXTENSION_VERSION": "~4",
+    "AzureWebJobsFeatureFlags": "EnableWorkerIndexing",
+    "PYTHON_ENABLE_INIT_INDEXING": "1",
+
+    "RAG_ENV": "local",
+    "RAG_SERVICE_NAME": "rag-ingestion",
+    "RAG_LOG_LEVEL": "INFO",
+    "RAG_LOG_JSON": "true",
+
+    "RAG_INGEST_ENABLED": "true",
+    "RAG_INGEST_CRON": "0 30 2 * * *",
+    "RAG_INGEST_TIMEZONE": "UTC",
+    "RAG_INGEST_WORKING_HOURS_START": "8",
+    "RAG_INGEST_WORKING_HOURS_END": "18",
+    "RAG_INGEST_FORCE": "false",
+    "RAG_INGEST_MAX_PARALLEL_DOCS": "8",
+    "RAG_INGEST_BATCH_SIZE": "32",
+    "RAG_INGEST_DELETE_MISSING": "true",
+    "RAG_INGEST_REINDEX_ON_ACL_CHANGE": "true",
+    "RAG_INGEST_MAX_DOCUMENT_BYTES": "26214400",
+    "RAG_INGEST_MANIFEST_CONTAINER": "rag-manifests",
+    "RAG_INGEST_LOCAL_ROOT": "./data/documents",
+    "RAG_INGEST_HTTP_USER_AGENT": "productionizing-rag-crawler/0.1",
+    "RAG_INGEST_HTTP_MAX_PAGES": "500",
+    "RAG_INGEST_HTTP_CONCURRENCY": "4",
+    "RAG_INGEST_HTTP_TIMEOUT_SECONDS": "20",
+    "RAG_INGEST_SQL_BATCH_SIZE": "500",
+    "RAG_INGEST_RETRY_ATTEMPTS": "3",
+
+    "RAG_QDRANT_URL": "http://localhost:6333",
+    "RAG_QDRANT_API_KEY": "",
+
+    "RAG_POSTGRES_HOST": "localhost",
+    "RAG_POSTGRES_PORT": "5432",
+    "RAG_POSTGRES_USER": "rag",
+    "RAG_POSTGRES_PASSWORD": "rag",
+    "RAG_POSTGRES_DB": "rag",
+    "RAG_POSTGRES_SSLMODE": "prefer",
+
+    "RAG_AZURE_BLOB_ACCOUNT_URL": "",
+    "RAG_AZURE_BLOB_CONTAINER": "rag-documents",
+    "RAG_AZURE_BLOB_RAW_CONTAINER": "rag-raw",
+    "RAG_AZURE_BLOB_CONNECTION_STRING": "UseDevelopmentStorage=true",
+    "RAG_AZURE_STORAGE_QUEUE_NAME": "rag-ingest",
+    "RAG_AZURE_KEY_VAULT_URL": "",
+    "RAG_AZURE_USE_MANAGED_IDENTITY": "false",
+    "RAG_AZURE_CLIENT_ID": "",
+    "RAG_AZURE_GRAPH_BASE_URL": "https://graph.microsoft.com/v1.0",
+    "RAG_AZURE_GRAPH_SCOPE": "https://graph.microsoft.com/.default",
+
+    "RAG_ENTRA_TENANT_ID": "",
+    "RAG_ENTRA_CLIENT_ID": "",
+
+    "RAG_ANTHROPIC_API_KEY": "",
+    "RAG_ANTHROPIC_MODEL_FAST": "claude-sonnet-5",
+    "RAG_ANTHROPIC_MODEL_CHEAP": "claude-haiku-4-5",
+
+    "RAG_EMBEDDING_MODEL": "BAAI/bge-m3",
+    "RAG_EMBEDDING_DIM": "1024",
+    "RAG_EMBEDDING_SPARSE_MODEL": "Qdrant/bm25",
+    "RAG_EMBEDDING_BATCH_SIZE": "32",
+
+    "RAG_CHUNK_TARGET_TOKENS": "512",
+    "RAG_CHUNK_OVERLAP_TOKENS": "64",
+    "RAG_CHUNK_MIN_TOKENS": "64",
+    "RAG_CHUNK_MAX_TOKENS": "1024",
+    "RAG_CHUNK_RESPECT_HEADINGS": "true",
+    "RAG_CHUNK_CONTEXTUAL_HEADER_ENABLED": "true",
+
+    "RAG_DEDUPE_ENABLED": "true",
+    "RAG_DEDUPE_MAX_DISTANCE": "3",
+    "RAG_DEDUPE_MIN_CHUNK_CHARS": "64",
+
+    "RAG_PII_ENABLED": "true",
+    "RAG_PII_REDACTION_MODE": "mask",
+    "RAG_PII_HASH_SECRET": "change-me-pii-hmac-secret",
+
+    "RAG_LANGFUSE_ENABLED": "false",
+    "RAG_LANGFUSE_HOST": "http://localhost:3000",
+    "RAG_LANGFUSE_PUBLIC_KEY": "",
+    "RAG_LANGFUSE_SECRET_KEY": ""
+  },
+  "Host": {
+    "LocalHttpPort": 7071,
+    "CORS": "*"
+  },
+  "ConnectionStrings": {}
+}

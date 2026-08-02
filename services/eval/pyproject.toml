@@ -1,0 +1,74 @@
+[project]
+name = "rag-eval"
+version = "0.1.0"
+description = "Golden-set validation harness: RAGAS, semantic similarity and the CI gate"
+readme = "../../README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "ragcore",
+
+    # The golden set and the persona file are real YAML (block scalars, anchors),
+    # unlike the tool registry which is parsed by a restricted in-house reader.
+    "pyyaml>=6.0",
+
+    "anyio>=4.6",
+    "pydantic>=2.9",
+]
+
+[project.optional-dependencies]
+# RAGAS is deliberately optional. `eval.ragas_adapter` degrades to the native
+# Claude-judged implementations of the same metrics with a loud warning when the
+# extra is absent or when a RAGAS release moves a symbol, so CI never breaks on a
+# transitive dependency of a scoring library.
+ragas = [
+    "ragas>=0.2",
+    "langchain-core>=0.3",
+]
+
+[project.scripts]
+# `python -m eval.run_eval` is the canonical CLI; `python -m eval.run` also works
+# (see the alias in eval/__init__.py) because ci.yml and the Makefile invoke that
+# spelling.
+rag-eval = "eval.run_eval:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# The importable package *is* this directory: `services/eval/__init__.py` makes it
+# `eval`, which is the name `docs/CONTRACTS.md` (repository layout) and the ruff
+# isort `known-first-party` list both use. Hatchling cannot infer that from the
+# distribution name, so the mapping is spelled out.
+#
+# Note there is deliberately no dependency on the API distribution. The harness
+# imports `app.rag.citations` / `app.rag.guardrails` / the orchestrator, but the
+# workspace installs every member together (`uv sync --all-packages`), and naming
+# a sibling service here would couple this file to that service's distribution
+# name. A missing `app` surfaces as a clear EvalDependencyError instead.
+# `only-include` + `sources` rather than `force-include`: a force-included path is
+# copied into the wheel *even in editable mode*, so `site-packages/eval/` ended up
+# shadowing the `dev-mode-dirs` .pth entry (site-packages precedes .pth-appended
+# paths). Edits under `services/eval/` were then invisible to `import eval.*` until
+# the next `--reinstall`, and a newly added module that nobody remembered to list
+# here did not resolve at all. Normal selection is honoured by the editable build,
+# which emits only the .pth, so the source tree is always what runs.
+[tool.hatch.build.targets.wheel]
+# Editable installs put `services/` on sys.path so `import eval` resolves to this
+# directory without a copy step.
+dev-mode-dirs = [".."]
+only-include = [
+    "__init__.py",
+    "ci_gate.py",
+    "harness.py",
+    "metrics.py",
+    "ragas_adapter.py",
+    "report.py",
+    "run_eval.py",
+    "semantic.py",
+    "golden",
+]
+
+# The project root *is* the package directory, so every selected path is relocated
+# under `eval/` in the built wheel.
+[tool.hatch.build.targets.wheel.sources]
+"" = "eval"

@@ -1,0 +1,55 @@
+# Azure Functions deployment requirements.
+#
+# The Functions host installs this file (remote build, or `pip install` inside the
+# Dockerfile). It mirrors `pyproject.toml` minus `ragcore`, which is a workspace
+# path dependency and therefore not resolvable from PyPI: the Dockerfile copies
+# `packages/ragcore` into the image and installs it separately, immediately before
+# this file. Keep the two lists in step.
+#
+# For local development use `uv sync --all-packages --all-groups` at the repo root
+# instead of this file.
+
+# --- Azure Functions host + Durable Functions
+azure-functions>=1.21
+azure-functions-durable>=1.2.10
+
+# --- Azure data plane
+azure-core>=1.32
+azure-identity>=1.19
+azure-storage-blob>=12.24
+azure-keyvault-secrets>=4.9
+
+# --- SharePoint / OneDrive via Microsoft Graph
+msal>=1.31
+
+# --- HTTP crawler
+httpx>=0.28
+defusedxml>=0.7.1
+
+# --- SQL source
+sqlalchemy[asyncio]>=2.0
+asyncpg>=0.30
+
+# --- document parsers
+pypdf>=5.1
+pdfplumber>=0.11
+python-docx>=1.1
+python-pptx>=1.0
+openpyxl>=3.1
+selectolax>=0.3.21
+beautifulsoup4>=4.12
+
+# --- shared runtime (also pulled in by ragcore; pinned here so a remote build
+# without the workspace still resolves a compatible set)
+anyio>=4.6
+pydantic>=2.9
+pydantic-settings>=2.6
+python-dateutil>=2.9
+qdrant-client[fastembed]>=1.12
+fastembed>=0.4
+anthropic>=0.40
+structlog>=24.4
+tenacity>=9.0
+orjson>=3.10
+alembic>=1.14
+langfuse>=2.53

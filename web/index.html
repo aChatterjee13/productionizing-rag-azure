@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en" class="h-full">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <meta
+      name="description"
+      content="Grounded, cited, multi-tenant RAG chat with a legible retrieval pipeline."
+    />
+    <title>Productionizing RAG</title>
+    <script>
+      // Apply the persisted theme before first paint so there is no light flash.
+      // Mirrors the shape written by web/src/store/settings.ts (zustand persist).
+      (function () {
+        try {
+          var raw = window.localStorage.getItem('rag.settings.v1');
+          var mode = raw ? (JSON.parse(raw).state || {}).theme : 'system';
+          var dark =
+            mode === 'dark' ||
+            ((mode === 'system' || !mode) &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches);
+          document.documentElement.classList.toggle('dark', !!dark);
+        } catch (error) {
+          void error;
+        }
+      })();
+    </script>
+  </head>
+  <body class="h-full">
+    <div id="root" class="h-full"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

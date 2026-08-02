@@ -1,0 +1,140 @@
+[project]
+name = "productionizing-rag"
+version = "0.1.0"
+description = "Production RAG platform: multi-tenant hybrid retrieval on Azure + Claude"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+
+# The workspace root is virtual: it owns no importable package. Every service and
+# library lives in a workspace member below. Use `uv sync --all-packages` to install
+# all members (the Makefile does this) rather than listing members here, so member
+# distribution names stay owned by the member's own pyproject.toml.
+[tool.uv]
+package = false
+# onnxruntime (pulled in by fastembed) stopped publishing macOS x86_64 wheels after
+# 1.23.2. On an Intel Mac the resolver otherwise picks 1.28.x and the sync fails with
+# "no source distribution or wheel for the current platform". The pin is marker-scoped,
+# so Linux/arm64 CI and the container images still get the current release.
+constraint-dependencies = [
+    "onnxruntime<=1.23.2; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+]
+
+[tool.uv.workspace]
+members = [
+    "packages/ragcore",
+    "services/api",
+    "services/ingestion",
+    "services/eval",
+]
+
+[tool.uv.sources]
+ragcore = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "ruff>=0.8.0",
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "anyio>=4.6.0",
+    "httpx>=0.28.0",
+    "respx>=0.22.0",
+    "aiosqlite>=0.20.0",
+]
+
+# --------------------------------------------------------------------------------
+# ruff
+# --------------------------------------------------------------------------------
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+extend-exclude = [
+    ".venv",
+    "web",
+    "infra",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "SIM",  # flake8-simplify
+    "ASYNC",# flake8-async
+    "S",    # flake8-bandit
+    "T20",  # flake8-print
+    "RUF",  # ruff-specific
+    "ANN",  # flake8-annotations
+    "D",    # pydocstyle
+    "TID",  # flake8-tidy-imports
+    "PTH",  # flake8-use-pathlib
+    "E501", # line length
+]
+ignore = [
+    "D203",   # conflicts with D211
+    "D213",   # conflicts with D212
+    "ANN401", # allow typing.Any where the payload genuinely is arbitrary JSON
+    "B008",   # FastAPI Depends() in defaults is idiomatic
+    "SIM108", # ternary rewrites hurt readability in guard chains
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "parents"
+
+[tool.ruff.lint.isort]
+# Workspace members are first-party: keep `from ragcore...` in its own import block
+# rather than interleaved with third-party packages.
+known-first-party = ["ragcore", "app", "ingestion", "eval"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S101", "D100", "D101", "D102", "D103", "ANN", "S105", "S106"]
+"**/test_*.py" = ["S101", "D100", "D101", "D102", "D103", "ANN", "S105", "S106"]
+"**/conftest.py" = ["D100", "D103", "ANN"]
+"packages/ragcore/ragcore/db/migrations/**" = ["D", "ANN", "E501", "INP001"]
+# GuardrailBlocked is the exception name fixed by docs/CONTRACTS.md; N818 would
+# rename it to GuardrailBlockedError and break every downstream import.
+"packages/ragcore/ragcore/errors.py" = ["N818"]
+# SSEEvent.TOKEN = "token" is an SSE event name, not a credential.
+"packages/ragcore/ragcore/models/chat.py" = ["S105"]
+"scripts/**" = ["T20"]
+"services/eval/**" = ["T20"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+# --------------------------------------------------------------------------------
+# pytest
+# --------------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = [
+    "packages/ragcore/tests",
+    "services/api/tests",
+    "services/ingestion/tests",
+    "services/eval/tests",
+]
+python_files = ["test_*.py"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+]
+markers = [
+    "integration: requires a live Qdrant/Postgres/Redis (skipped by default in CI)",
+    "llm: performs a real Anthropic API call",
+    "slow: takes more than a few seconds",
+]
+filterwarnings = [
+    "error::DeprecationWarning:ragcore.*",
+]

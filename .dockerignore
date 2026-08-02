@@ -1,0 +1,108 @@
+# ---------------------------------------------------------------------------------
+# Root .dockerignore — applies to builds whose context is the repository root, which is
+# how services/api/Dockerfile is built (it needs packages/ragcore).
+#
+# Keep: pyproject.toml, uv.lock, README.md, packages/**, services/**.
+# Drop: anything secret, host-specific, huge, or irrelevant to the image — every entry
+# here also invalidates fewer layers, so builds stay cacheable.
+# ---------------------------------------------------------------------------------
+
+# ----------------------------------------------------------------------- secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.pfx
+*.key
+.secrets/
+local.settings.json
+
+# --------------------------------------------------------------------------- vcs
+.git
+.gitignore
+.gitattributes
+.github
+
+# ------------------------------------------------------------------------ python
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
+.venv
+venv
+env
+ENV
+build
+dist
+sdist
+wheels
+.eggs
+
+# ----------------------------------------------------------------------- tooling
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.coverage
+.coverage.*
+coverage.xml
+htmlcov
+junit*.xml
+.hypothesis
+.tox
+.nox
+
+# ------------------------------------------------------------------ model caches
+# FastEmbed weights are hundreds of MB and are mounted at runtime, never baked in.
+.cache
+.fastembed_cache
+models
+**/*.onnx
+
+# -------------------------------------------------------------------------- node
+# The web image is built from the web/ context; nothing here belongs in the api image.
+node_modules
+**/node_modules
+web/dist
+web/.vite
+web/coverage
+npm-debug.log*
+**/*.tsbuildinfo
+
+# ---------------------------------------------------------------------- data/logs
+data
+logs
+**/*.log
+qdrant_storage
+pgdata
+.manifests
+services/eval/reports
+services/eval/.cache
+
+# --------------------------------------------------------------------- azure/infra
+.azure
+infra
+**/bin
+**/obj
+.python_packages
+
+# ------------------------------------------------------------- containers & docs
+docker-compose.yml
+docker-compose.*.yml
+**/Dockerfile
+**/.dockerignore
+docs
+Makefile
+
+# -------------------------------------------------------------------------- tests
+# The runtime image installs the api package non-editable; tests are not part of it.
+**/tests
+
+# ------------------------------------------------------------------------ editors
+.vscode
+.idea
+**/*.swp
+**/*~
+
+# ----------------------------------------------------------------------------- os
+.DS_Store
+**/.DS_Store
+Thumbs.db

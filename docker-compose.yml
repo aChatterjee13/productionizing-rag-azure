@@ -1,0 +1,313 @@
+# Local development stack for productionizing-rag.
+#
+# Docker is NOT installed on the build machine — this file is written to be correct,
+# not executed here. Bring it up on a machine that has Docker with `make up`.
+#
+# Services: qdrant, postgres (app), redis, langfuse (web + worker + its own postgres,
+# clickhouse and minio, per the current Langfuse v3 self-host compose), api, web.
+#
+# Every service has a healthcheck; api waits for qdrant and postgres to be healthy.
+
+name: productionizing-rag
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # ---------------------------------------------------------------- qdrant
+  qdrant:
+    image: qdrant/qdrant:v1.12.4
+    container_name: rag-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333" # REST
+      - "6334:6334" # gRPC
+    environment:
+      QDRANT__SERVICE__HTTP_PORT: "6333"
+      QDRANT__SERVICE__GRPC_PORT: "6334"
+      QDRANT__LOG_LEVEL: INFO
+      # Payload-index-friendly defaults; ensure_collections() sets the real values.
+      QDRANT__STORAGE__PERFORMANCE__MAX_OPTIMIZATION_THREADS: "2"
+    volumes:
+      - qdrant-storage:/qdrant/storage
+      - qdrant-snapshots:/qdrant/snapshots
+    healthcheck:
+      # The Qdrant image ships no curl/wget, so probe the port with bash's /dev/tcp
+      # and speak just enough HTTP to get a response from /readyz.
+      test:
+        - CMD-SHELL
+        - >-
+          bash -c 'printf "GET /readyz HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+          >/dev/tcp/127.0.0.1/6333'
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    logging: *default-logging
+
+  # -------------------------------------------------------------- postgres
+  postgres:
+    image: postgres:16-alpine
+    container_name: rag-postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: rag
+      POSTGRES_PASSWORD: rag
+      POSTGRES_DB: rag
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag -d rag"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    logging: *default-logging
+
+  # ----------------------------------------------------------------- redis
+  redis:
+    image: redis:7-alpine
+    container_name: rag-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    logging: *default-logging
+
+  # ------------------------------------------- langfuse backing services
+  langfuse-postgres:
+    image: postgres:16-alpine
+    container_name: rag-langfuse-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    logging: *default-logging
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8
+    container_name: rag-clickhouse
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - clickhouse-logs:/var/log/clickhouse-server
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    logging: *default-logging
+
+  minio:
+    image: minio/minio:RELEASE.2024-10-13T13-34-11Z
+    container_name: rag-minio
+    restart: unless-stopped
+    entrypoint: sh
+    command: -c 'mkdir -p /data/langfuse && minio server /data --console-address ":9001"'
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: miniosecret
+    ports:
+      - "9090:9000"
+      - "9091:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    logging: *default-logging
+
+  # -------------------------------------------------------------- langfuse
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    container_name: rag-langfuse-worker
+    restart: unless-stopped
+    depends_on:
+      langfuse-postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment: &langfuse-env
+      DATABASE_URL: postgresql://langfuse:langfuse@langfuse-postgres:5432/langfuse
+      SALT: local-dev-salt-change-me
+      ENCRYPTION_KEY: 0000000000000000000000000000000000000000000000000000000000000000
+      NEXTAUTH_SECRET: local-dev-nextauth-secret-change-me
+      NEXTAUTH_URL: http://localhost:3000
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
+      CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: minio
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: miniosecret
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: events/
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3030/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    logging: *default-logging
+
+  langfuse:
+    image: langfuse/langfuse:3
+    container_name: rag-langfuse
+    restart: unless-stopped
+    depends_on:
+      langfuse-postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      langfuse-worker:
+        condition: service_started
+    ports:
+      - "3000:3000"
+    environment:
+      <<: *langfuse-env
+      # Seeds a project on first boot so `make bootstrap` can print working keys.
+      LANGFUSE_INIT_ORG_ID: rag-local
+      LANGFUSE_INIT_ORG_NAME: RAG Local
+      LANGFUSE_INIT_PROJECT_ID: rag-local
+      LANGFUSE_INIT_PROJECT_NAME: productionizing-rag
+      LANGFUSE_INIT_PROJECT_PUBLIC_KEY: pk-lf-0000000000000000000000000000000000000000
+      LANGFUSE_INIT_PROJECT_SECRET_KEY: sk-lf-0000000000000000000000000000000000000000
+      LANGFUSE_INIT_USER_EMAIL: dev@example.com
+      LANGFUSE_INIT_USER_NAME: Dev
+      LANGFUSE_INIT_USER_PASSWORD: localdevpassword
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/public/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    logging: *default-logging
+
+  # ------------------------------------------------------------------- api
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+    container_name: rag-api
+    restart: unless-stopped
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # Container-network overrides for the .env defaults, which point at localhost.
+      RAG_ENV: local
+      RAG_QDRANT_URL: http://qdrant:6333
+      RAG_POSTGRES_HOST: postgres
+      RAG_POSTGRES_PORT: "5432"
+      RAG_REDIS_URL: redis://redis:6379/0
+      RAG_LANGFUSE_HOST: http://langfuse:3000
+      RAG_API_HOST: 0.0.0.0
+      RAG_API_PORT: "8000"
+      RAG_EMBEDDING_CACHE_DIR: /models
+    volumes:
+      # Persist FastEmbed weights so a container restart does not re-download bge-m3.
+      - fastembed-cache:/models
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request,sys;
+          sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health',
+          timeout=3).status==200 else 1)"
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+    logging: *default-logging
+
+  # ------------------------------------------------------------------- web
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: http://localhost:8000
+    container_name: rag-web
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    ports:
+      - "5173:80"
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    logging: *default-logging
+
+volumes:
+  qdrant-storage:
+  qdrant-snapshots:
+  postgres-data:
+  redis-data:
+  langfuse-postgres-data:
+  clickhouse-data:
+  clickhouse-logs:
+  minio-data:
+  fastembed-cache:

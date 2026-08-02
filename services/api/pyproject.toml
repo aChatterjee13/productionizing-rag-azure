@@ -1,0 +1,49 @@
+[project]
+name = "rag-api"
+version = "0.1.0"
+description = "FastAPI surface for the productionizing-rag platform: chat, search, memory, admin"
+readme = "../../README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "ragcore",
+
+    # --- HTTP surface
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "python-multipart>=0.0.20",
+
+    # --- Entra ID token validation (RS256 against the cached JWKS) and the
+    #     Microsoft Graph fallback for the group-overage claim.
+    "pyjwt[crypto]>=2.10",
+    "httpx>=0.28",
+
+    # --- tool layer (Addendum T): REST executor + the official MCP SDK for
+    #     self-hosted servers. A missing `mcp` only disables the local MCP path.
+    "mcp>=1.2",
+
+    # --- short-term session window and per-tenant rate limiting. Optional at
+    #     runtime: both degrade to an in-process implementation when Redis is
+    #     unreachable, but the client is declared so the degradation is a choice.
+    "redis>=5.2",
+
+    # --- shared runtime
+    "anyio>=4.6",
+    "pydantic>=2.9",
+    "sqlalchemy[asyncio]>=2.0",
+    "qdrant-client>=1.12",
+    "structlog>=24.4",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.hatch.build.targets.wheel.force-include]
+# Declarative REST/MCP tool definitions are data, not code.
+# `registry.config_search_paths` resolves them at `parents[3]/config` relative to
+# `app/rag/tools/registry.py`, which is `services/api/config` in the repository and
+# `<site-packages>/config` once installed — hence this destination.
+"config" = "config"

@@ -1,0 +1,58 @@
+{
+  "version": "2.0",
+  "logging": {
+    "logLevel": {
+      "default": "Information",
+      "Host.Aggregator": "Information",
+      "Host.Results": "Information",
+      "Function": "Information"
+    },
+    "applicationInsights": {
+      "samplingSettings": {
+        "isEnabled": true,
+        "excludedTypes": "Request;Exception",
+        "maxTelemetryItemsPerSecond": 20
+      }
+    }
+  },
+  "extensionBundle": {
+    "id": "Microsoft.Azure.Functions.ExtensionBundle",
+    "version": "[4.*, 5.0.0)"
+  },
+  "functionTimeout": "01:00:00",
+  "extensions": {
+    "durableTask": {
+      "hubName": "ragingest",
+      "maxConcurrentActivityFunctions": 8,
+      "maxConcurrentOrchestratorFunctions": 4,
+      "extendedSessionsEnabled": true,
+      "extendedSessionIdleTimeoutInSeconds": 30,
+      "storageProvider": {
+        "connectionStringName": "AzureWebJobsStorage",
+        "controlQueueBatchSize": 16,
+        "maxQueuePollingInterval": "00:00:10"
+      }
+    },
+    "queues": {
+      "batchSize": 8,
+      "newBatchThreshold": 4,
+      "maxDequeueCount": 3,
+      "visibilityTimeout": "00:05:00",
+      "maxPollingInterval": "00:00:10"
+    },
+    "blobs": {
+      "maxDegreeOfParallelism": 4
+    },
+    "http": {
+      "routePrefix": "api"
+    }
+  },
+  "concurrency": {
+    "dynamicConcurrencyEnabled": false,
+    "snapshotPersistenceEnabled": false
+  },
+  "singleton": {
+    "lockPeriod": "00:00:30",
+    "listenerLockPeriod": "00:01:00"
+  }
+}

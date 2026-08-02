@@ -1,0 +1,158 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  :root.dark {
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-slate-100 font-sans text-[15px] text-slate-900 antialiased;
+    @apply dark:bg-slate-950 dark:text-slate-100;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-brand-500 ring-offset-2;
+    @apply ring-offset-slate-100 dark:ring-offset-slate-950;
+  }
+
+  /* Respect a user's reduced-motion preference for every animation we ship. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer components {
+  .panel {
+    @apply rounded-xl border border-slate-200 bg-white shadow-sm;
+    @apply dark:border-slate-800 dark:bg-slate-900;
+  }
+
+  .panel-header {
+    @apply flex items-center justify-between gap-2 border-b border-slate-200 px-4 py-3;
+    @apply dark:border-slate-800;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg border px-3 py-1.5;
+    @apply text-sm font-medium transition-colors disabled:cursor-not-allowed;
+    @apply disabled:opacity-50;
+    @apply border-slate-300 bg-white text-slate-700 hover:bg-slate-50;
+    @apply dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200;
+    @apply dark:hover:bg-slate-700;
+  }
+
+  .btn-primary {
+    @apply border-brand-600 bg-brand-600 text-white hover:bg-brand-700;
+    @apply dark:border-brand-500 dark:bg-brand-600 dark:text-white;
+    @apply dark:hover:bg-brand-500;
+  }
+
+  .btn-ghost {
+    @apply border-transparent bg-transparent text-slate-600 hover:bg-slate-200/70;
+    @apply dark:text-slate-300 dark:hover:bg-slate-800;
+  }
+
+  .btn-danger {
+    @apply border-rose-300 bg-white text-rose-700 hover:bg-rose-50;
+    @apply dark:border-rose-900 dark:bg-slate-900 dark:text-rose-300;
+    @apply dark:hover:bg-rose-950/50;
+  }
+
+  .btn-xs {
+    @apply gap-1 px-2 py-1 text-xs;
+  }
+
+  .label {
+    @apply block text-xs font-semibold uppercase tracking-wide text-slate-500;
+    @apply dark:text-slate-400;
+  }
+
+  .input,
+  .select,
+  .textarea {
+    @apply w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-sm;
+    @apply text-slate-900 placeholder:text-slate-400;
+    @apply dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100;
+    @apply dark:placeholder:text-slate-500;
+  }
+
+  .badge {
+    @apply inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs;
+    @apply border-slate-200 bg-slate-100 text-slate-700;
+    @apply dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs;
+    @apply border-slate-200 bg-slate-50 text-slate-600;
+    @apply dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300;
+  }
+
+  /* Inline [n] citation marker inside a streamed answer. */
+  .marker-chip {
+    @apply mx-0.5 inline-flex min-w-[1.4rem] items-center justify-center rounded;
+    @apply border border-brand-300 bg-brand-50 px-1 align-baseline text-xs;
+    @apply font-semibold text-brand-700 transition-colors hover:bg-brand-100;
+    @apply dark:border-brand-800 dark:bg-brand-950 dark:text-brand-300;
+    @apply dark:hover:bg-brand-900;
+  }
+
+  .marker-chip-active {
+    @apply border-brand-600 bg-brand-600 text-white dark:bg-brand-500;
+    @apply dark:text-white;
+  }
+
+  .kbd {
+    @apply rounded border border-slate-300 bg-slate-100 px-1 font-mono text-[11px];
+    @apply text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400;
+  }
+
+  .data-table {
+    @apply w-full border-collapse text-left text-sm;
+  }
+
+  .data-table th {
+    @apply whitespace-nowrap border-b border-slate-200 px-2 py-1.5 text-xs;
+    @apply font-semibold uppercase tracking-wide text-slate-500;
+    @apply dark:border-slate-800 dark:text-slate-400;
+  }
+
+  .data-table td {
+    @apply border-b border-slate-100 px-2 py-1.5 align-top;
+    @apply dark:border-slate-800/70;
+  }
+
+  .scroll-area {
+    @apply overflow-y-auto overscroll-contain;
+    scrollbar-width: thin;
+  }
+
+  .scroll-x {
+    @apply overflow-x-auto;
+  }
+}
+
+@layer utilities {
+  .streaming-caret::after {
+    content: '▍';
+    @apply ml-0.5 inline-block animate-caret-blink text-brand-500;
+  }
+}

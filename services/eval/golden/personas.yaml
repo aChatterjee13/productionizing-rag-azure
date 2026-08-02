@@ -1,0 +1,54 @@
+# Personas the golden set runs as.
+#
+# Each entry is a ragcore.models.acl.Principal — exactly the object the Entra token
+# resolver builds from a real `oid`/`tid`/`roles`/`groups` claim set, so an evaluated
+# turn is indistinguishable from a signed-in one as far as build_acl_filter is
+# concerned.
+#
+# These values are copied from scripts/seed_demo_tenant.py (PERSONAS). They must stay
+# byte-identical to it: services/eval/tests/test_metrics.py asserts that, so a change
+# to the fixture fails the test rather than silently weakening the ACL assertions.
+#
+#   key              roles                   groups                              clearance
+#   ---------------- ----------------------- ----------------------------------- ------------
+#   acme_admin       rag.admin, rag.user     g-acme-engineering, g-acme-hr       restricted
+#   acme_engineer    rag.user                g-acme-engineering                  confidential
+#   acme_intern      rag.user                g-acme-interns                      public
+#   globex_analyst   rag.user                g-globex-operations                 confidential
+
+personas:
+  acme_admin:
+    user_id: "11111111-1111-4111-8111-000000000001"
+    tenant_id: tenant-acme
+    roles: [rag.admin, rag.user]
+    groups: [g-acme-engineering, g-acme-hr]
+    email: dana.admin@acme.example
+    display_name: Dana Admin
+    max_classification: restricted
+
+  acme_engineer:
+    user_id: "11111111-1111-4111-8111-000000000002"
+    tenant_id: tenant-acme
+    roles: [rag.user]
+    groups: [g-acme-engineering]
+    email: erik.engineer@acme.example
+    display_name: Erik Engineer
+    max_classification: confidential
+
+  acme_intern:
+    user_id: "11111111-1111-4111-8111-000000000003"
+    tenant_id: tenant-acme
+    roles: [rag.user]
+    groups: [g-acme-interns]
+    email: ines.intern@acme.example
+    display_name: Ines Intern
+    max_classification: public
+
+  globex_analyst:
+    user_id: "22222222-2222-4222-8222-000000000001"
+    tenant_id: tenant-globex
+    roles: [rag.user]
+    groups: [g-globex-operations]
+    email: gita.analyst@globex.example
+    display_name: Gita Analyst
+    max_classification: confidential

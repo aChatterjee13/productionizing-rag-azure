@@ -1,0 +1,44 @@
+[project]
+name = "ragcore"
+version = "0.1.0"
+description = "Shared contracts and infrastructure for the productionizing-rag platform"
+readme = "../../README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "qdrant-client[fastembed]>=1.12",
+    "fastembed>=0.4",
+    "anthropic>=0.40",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.30",
+    "alembic>=1.14",
+    "structlog>=24.4",
+    "langfuse>=2.53",
+    # `ragcore.observability.metrics` imports it defensively, so a build without it
+    # still runs — but PROMETHEUS_AVAILABLE is then False and GET /metrics serves a
+    # single comment line instead of the seventeen documented rag_* series.
+    "prometheus-client>=0.21",
+    "tenacity>=9.0",
+    "python-dateutil>=2.9",
+    "orjson>=3.10",
+]
+
+[project.optional-dependencies]
+# Presidio is optional on purpose: ragcore.pii degrades to a regex-only recogniser
+# set and logs a warning when these are absent. The package must still import.
+pii = [
+    "presidio-analyzer>=2.2",
+    "presidio-anonymizer>=2.2",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["ragcore"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"ragcore/db/alembic.ini" = "ragcore/db/alembic.ini"
+"ragcore/db/migrations" = "ragcore/db/migrations"

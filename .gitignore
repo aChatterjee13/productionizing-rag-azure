@@ -1,0 +1,116 @@
+# ------------------------------------------------------------------ secrets
+# Never commit a filled-in environment file. .env.example is the template.
+.env
+.env.*
+!.env.example
+*.pem
+*.pfx
+*.key
+local.settings.json
+.secrets/
+
+# -------------------------------------------------------------------- python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib60/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# virtualenvs / uv
+.venv/
+venv/
+env/
+ENV/
+uv.lock.bak
+
+# -------------------------------------------------------------------- tooling
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.hypothesis/
+.tox/
+.nox/
+junit*.xml
+
+# --------------------------------------------------------------- model caches
+# FastEmbed downloads bge-m3 and the reranker here; hundreds of MB.
+.cache/
+.fastembed_cache/
+# Anchored to the repo root on purpose. An unanchored `models/` matches *any*
+# directory of that name at any depth, which silently excluded the whole of
+# packages/ragcore/ragcore/models/ — the model layer — from every commit.
+/models/
+*.onnx
+
+# ------------------------------------------------------------------------ node
+node_modules/
+web/dist/
+web/.vite/
+web/coverage/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+*.tsbuildinfo
+
+# ------------------------------------------------------------------- data/logs
+data/
+!data/.gitkeep
+logs/
+*.log
+qdrant_storage/
+pgdata/
+
+# eval + ingestion artefacts
+services/eval/reports/
+services/eval/.cache/
+.manifests/
+
+# ------------------------------------------------------------------------ azure
+.azure/
+bin/
+obj/
+.python_packages/
+# Azure Functions local artefacts
+services/ingestion/.python_packages/
+services/ingestion/bin/
+services/ingestion/obj/
+
+# --------------------------------------------------------------------- editors
+.vscode/
+!.vscode/settings.json.example
+.idea/
+*.swp
+*.swo
+*~
+
+# ------------------------------------------------------------------------- os
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
