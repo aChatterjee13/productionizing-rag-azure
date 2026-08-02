@@ -114,7 +114,7 @@ PROMOTED: dict[str, Any] = {
     "api_rate_limit_prefix": "rag:ratelimit:",
     "api_sse_retry_ms": 2000,
     "api_sse_heartbeat_comment": "heartbeat",
-    "api_problem_type_base": "https://productionizing-rag.dev/problems",
+    "api_problem_type_base": "https://productionizing-rag-azure.dev/problems",
     "api_docs_enabled": True,
     "api_default_page_size": 50,
     "api_max_page_size": 200,

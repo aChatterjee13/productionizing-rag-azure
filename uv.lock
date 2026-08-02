@@ -14,7 +14,7 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "productionizing-rag",
+    "productionizing-rag-azure",
     "rag-api",
     "rag-eval",
     "rag-ingestion",
@@ -2737,7 +2737,7 @@ wheels = [
 ]
 
 [[package]]
-name = "productionizing-rag"
+name = "productionizing-rag-azure"
 version = "0.1.0"
 source = { virtual = "." }
 

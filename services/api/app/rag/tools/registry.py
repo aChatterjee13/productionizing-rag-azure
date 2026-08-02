@@ -185,7 +185,7 @@ class ToolTuning(BaseSettings):
         default="2018-02-01", description="IMDS API version query parameter."
     )
     tool_user_agent: str = Field(
-        default="productionizing-rag-tools/0.1",
+        default="productionizing-rag-azure-tools/0.1",
         description="User-Agent header sent on every outbound REST tool call.",
     )
     tool_follow_redirects: bool = Field(

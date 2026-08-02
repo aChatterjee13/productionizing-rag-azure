@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------------
-// main.bicep — the whole productionizing-rag platform in one resource-group deployment.
+// main.bicep — the whole productionizing-rag-azure platform in one resource-group deployment.
 //
 //   observability ──> containerapps ──> qdrant
 //        │                 │              │
@@ -358,7 +358,7 @@ var piiHashSecretConfigured = !empty(piiHashSecret)
 var commonTags = union(
   {
     'azd-env-name': environmentName
-    application: 'productionizing-rag'
+    application: 'productionizing-rag-azure'
     environment: environmentName
   },
   tags

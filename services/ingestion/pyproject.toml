@@ -1,7 +1,7 @@
 [project]
 name = "rag-ingestion"
 version = "0.1.0"
-description = "Serverless multi-tenant delta ingestion for the productionizing-rag platform"
+description = "Serverless multi-tenant delta ingestion for the productionizing-rag-azure platform"
 readme = "../../README.md"
 requires-python = ">=3.13"
 dependencies = [

@@ -1,4 +1,4 @@
-# productionizing-rag
+# productionizing-rag-azure
 
 A multi-tenant, ACL-aware RAG platform built to a written interface spec
 (`docs/CONTRACTS.md`): hybrid retrieval over Qdrant, serverless delta ingestion on

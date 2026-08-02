@@ -30,7 +30,7 @@ and `Dockerfile`s, but never try to run them.
 ## Repository layout
 
 ```
-productionizing-rag/
+productionizing-rag-azure/
 ├── pyproject.toml                # uv workspace root
 ├── docker-compose.yml
 ├── Makefile
@@ -2395,7 +2395,7 @@ for callers. No call site hard-codes any of them.
 | `tool_mcp_disable_seconds` | `120.0` | cool-down after an unreachable MCP server |
 | `tool_result_cache_max_entries` | `256` | entries in the cacheable-tool cache |
 | `tool_result_summary_chars` | `500` | length of the `tool_invocations.result_summary` preview |
-| `tool_user_agent` / `tool_follow_redirects` | `productionizing-rag-tools/0.1` / `false` | outbound request hygiene |
+| `tool_user_agent` / `tool_follow_redirects` | `productionizing-rag-azure-tools/0.1` / `false` | outbound request hygiene |
 
 ## `app.rag.tools.registry`
 
@@ -3838,7 +3838,7 @@ def auth_setting(settings: Settings, name: str) -> Any
 | `api_rate_limit_prefix` | `"rag:ratelimit:"` | Redis key prefix; keys are `<prefix><tenant_id>:<user_id>` — tenant first. |
 | `api_sse_retry_ms` | `2000` | The one `retry:` hint that opens a stream. |
 | `api_sse_heartbeat_comment` | `"heartbeat"` | Comment text sent every `api_sse_keepalive_seconds`. |
-| `api_problem_type_base` | `https://productionizing-rag.dev/problems` | Base URI for RFC 7807 `type`. |
+| `api_problem_type_base` | `https://productionizing-rag-azure.dev/problems` | Base URI for RFC 7807 `type`. |
 | `api_docs_enabled` | `true` | `/docs`, `/redoc` and `/openapi.json`; additionally forced off when `env == "production"`. |
 | `api_default_page_size` / `api_max_page_size` | `50` / `200` | `limit` default and hard ceiling on every list endpoint. |
 | `api_warm_models` | `true` | Load FastEmbed dense/sparse/rerank models during startup. |

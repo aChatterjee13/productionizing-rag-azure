@@ -1,7 +1,7 @@
 [project]
 name = "ragcore"
 version = "0.1.0"
-description = "Shared contracts and infrastructure for the productionizing-rag platform"
+description = "Shared contracts and infrastructure for the productionizing-rag-azure platform"
 readme = "../../README.md"
 requires-python = ">=3.13"
 dependencies = [

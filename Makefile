@@ -1,4 +1,4 @@
-# productionizing-rag — developer entry points.
+# productionizing-rag-azure — developer entry points.
 #
 # Docker is not installed on the build machine: `up`/`down` are written to be correct
 # and are meant to run on a machine that has Docker. Everything else runs locally

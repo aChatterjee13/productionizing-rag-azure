@@ -1581,7 +1581,7 @@ class Settings(BaseSettings):
         description="Rewrite chunk payloads when only the ACL changed, skipping embed.",
     )
     ingest_http_user_agent: str = Field(
-        default="productionizing-rag-crawler/0.1",
+        default="productionizing-rag-azure-crawler/0.1",
         description="User-Agent sent by the HTTP/sitemap crawler.",
     )
     ingest_http_max_pages: int = Field(
@@ -1967,7 +1967,7 @@ class Settings(BaseSettings):
         ),
     )
     api_problem_type_base: str = Field(
-        default="https://productionizing-rag.dev/problems",
+        default="https://productionizing-rag-azure.dev/problems",
         description=(
             "Base URI for RFC 7807 'type' members. A stable, dereferenceable-looking "
             "URI is what makes a problem type machine-identifiable."

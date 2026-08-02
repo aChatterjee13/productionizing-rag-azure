@@ -37,7 +37,7 @@
     "RAG_INGEST_MAX_DOCUMENT_BYTES": "26214400",
     "RAG_INGEST_MANIFEST_CONTAINER": "rag-manifests",
     "RAG_INGEST_LOCAL_ROOT": "./data/documents",
-    "RAG_INGEST_HTTP_USER_AGENT": "productionizing-rag-crawler/0.1",
+    "RAG_INGEST_HTTP_USER_AGENT": "productionizing-rag-azure-crawler/0.1",
     "RAG_INGEST_HTTP_MAX_PAGES": "500",
     "RAG_INGEST_HTTP_CONCURRENCY": "4",
     "RAG_INGEST_HTTP_TIMEOUT_SECONDS": "20",

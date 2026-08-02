@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------------
-# deploy.sh — idempotent deployment of the productionizing-rag Azure platform.
+# deploy.sh — idempotent deployment of the productionizing-rag-azure Azure platform.
 #
 #   ./infra/azure/deploy.sh --env dev  --resource-group rg-rag-dev  --what-if
 #   ./infra/azure/deploy.sh --env dev  --resource-group rg-rag-dev

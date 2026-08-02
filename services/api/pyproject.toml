@@ -1,7 +1,7 @@
 [project]
 name = "rag-api"
 version = "0.1.0"
-description = "FastAPI surface for the productionizing-rag platform: chat, search, memory, admin"
+description = "FastAPI surface for the productionizing-rag-azure platform: chat, search, memory, admin"
 readme = "../../README.md"
 requires-python = ">=3.13"
 dependencies = [

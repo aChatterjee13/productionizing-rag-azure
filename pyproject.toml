@@ -1,5 +1,5 @@
 [project]
-name = "productionizing-rag"
+name = "productionizing-rag-azure"
 version = "0.1.0"
 description = "Production RAG platform: multi-tenant hybrid retrieval on Azure + Claude"
 readme = "README.md"

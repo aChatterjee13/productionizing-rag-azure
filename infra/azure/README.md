@@ -1,6 +1,6 @@
 # Azure infrastructure
 
-Bicep for the whole `productionizing-rag` platform, deployed as **one resource-group
+Bicep for the whole `productionizing-rag-azure` platform, deployed as **one resource-group
 deployment**. Everything is parameterised, nothing carries a secret value, and every
 workload authenticates with a managed identity wherever Azure allows it.
 

@@ -1,4 +1,4 @@
-"""ragcore: shared contracts and infrastructure for the productionizing-rag platform.
+"""ragcore: shared contracts and infrastructure for productionizing-rag-azure.
 
 Deliberately light at import time. Settings, errors, logging and the exception
 hierarchy are re-exported here; anything that pulls a heavy dependency (Qdrant,

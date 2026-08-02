@@ -82,7 +82,7 @@ API_SETTING_DEFAULTS: dict[str, Any] = {
     # ---------------------------------------------------------------- errors
     # Base URI for RFC 7807 `type` members. A stable, dereferenceable-looking URI
     # is what makes a problem type machine-identifiable.
-    "api_problem_type_base": "https://productionizing-rag.dev/problems",
+    "api_problem_type_base": "https://productionizing-rag-azure.dev/problems",
     # ------------------------------------------------------------------ docs
     # Interactive docs are served unless this is False. `main` additionally
     # refuses them in production unless explicitly re-enabled.
