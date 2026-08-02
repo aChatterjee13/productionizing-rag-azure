@@ -21,43 +21,12 @@ from ragcore.models.acl import Classification
 from ragcore.models.chunk import ChunkPayload
 
 __all__ = [
-    "UNSATISFIABLE",
     "Citation",
     "MetadataFilter",
     "RetrievalResult",
     "RetrievalStage",
     "RetrievedChunk",
 ]
-
-#: Written into a facet list when intersecting two filters leaves it empty.
-#:
-#: ``MetadataFilter`` deliberately reads an empty list as "no constraint" so a UI
-#: sending ``[]`` does not match nothing. That is right for user input and wrong for
-#: an intersection, where empty means the two filters share no value and the correct
-#: answer is to return nothing. Storing this sentinel keeps the clause present and
-#: unsatisfiable; no document_id, tag, author or language can equal it, because the
-#: NUL byte cannot appear in any of the sources those values come from.
-UNSATISFIABLE = "\x00__unsatisfiable__"
-
-
-def _narrower_section(mine: str | None, theirs: str | None) -> str | None:
-    """Intersect two ``section_prefix`` constraints.
-
-    ``section_path`` is a keyword array holding the breadcrumb, so a prefix names a
-    subtree. Two different headings name disjoint subtrees — taking either one would
-    widen the filter past the other, so the intersection is empty.
-
-    Args:
-        mine: This filter's section prefix, or None.
-        theirs: The other filter's section prefix, or None.
-
-    Returns:
-        The single constraint when only one side sets it, the shared value when both
-        agree, otherwise :data:`UNSATISFIABLE`.
-    """
-    if mine is None or theirs is None:
-        return mine or theirs
-    return mine if mine == theirs else UNSATISFIABLE
 
 
 class RetrievalStage(StrEnum):
@@ -117,6 +86,14 @@ class MetadataFilter(BaseModel):
     exclude_pii: bool = Field(
         default=False, description="Exclude chunks with any detected PII entity."
     )
+    unsatisfiable: bool = Field(
+        default=False,
+        description=(
+            "No document can satisfy this filter. Set by `merged_with` when two "
+            "filters constrain the same facet and share no value; "
+            "`build_acl_filter` turns it into a clause that matches nothing."
+        ),
+    )
 
     @model_validator(mode="after")
     def _normalise(self) -> MetadataFilter:
@@ -153,7 +130,10 @@ class MetadataFilter(BaseModel):
         """Whether this filter constrains anything at all.
 
         Returns:
-            True when no facet is set and ``exclude_pii`` is False.
+            True when no facet is set and neither ``exclude_pii`` nor
+            ``unsatisfiable`` is set. An unsatisfiable filter is the *most*
+            constraining one there is, so it is never empty — callers that skip an
+            empty filter must not skip this one.
         """
         return not any(
             (
@@ -168,18 +148,23 @@ class MetadataFilter(BaseModel):
                 self.date_to,
                 self.max_classification,
                 self.exclude_pii,
+                self.unsatisfiable,
             )
         )
 
     def merged_with(self, other: MetadataFilter | None) -> MetadataFilter:
         """Intersect this filter with another, taking the narrower constraint.
 
-        Used to combine a filter the user supplied with facets the query transformer
-        extracted. Neither side can widen the other: when both sides constrain a
-        facet and share no value the result is :data:`UNSATISFIABLE`, so the clause
-        survives and matches nothing. Returning an empty list there would be read as
-        "no constraint" by :meth:`_normalise` and would widen the filter to every
-        document the ACL allows.
+        Neither side can widen the other. Where an intersection comes out empty —
+        two facets sharing no value, two different section prefixes, or date bounds
+        that cross — the result is flagged :attr:`unsatisfiable` rather than left
+        empty, because :meth:`_normalise` reads an empty list as "no constraint" and
+        would widen the filter to every document the ACL allows.
+
+        The flag rather than a sentinel value keeps the impossibility out of the
+        facet lists, which are serialised into ``RetrievalResult.filter_applied`` and
+        returned to the client; only :func:`build_acl_filter` needs to know how to
+        express it against Qdrant.
 
         Args:
             other: The filter to merge in, or None.
@@ -190,13 +175,53 @@ class MetadataFilter(BaseModel):
         if other is None:
             return self.model_copy()
 
+        empty = False
+
         def _intersect(a: list[str] | None, b: list[str] | None) -> list[str] | None:
+            nonlocal empty
             if a is None:
                 return list(b) if b is not None else None
             if b is None:
                 return list(a)
             common = [item for item in a if item in set(b)]
-            return common or [UNSATISFIABLE]
+            if not common:
+                empty = True
+                return list(a)
+            return common
+
+        def _section() -> str | None:
+            nonlocal empty
+            mine, theirs = self.section_prefix, other.section_prefix
+            if mine is None or theirs is None:
+                return mine or theirs
+            if mine != theirs:
+                # Two headings name disjoint subtrees; keeping either would widen the
+                # filter past the other.
+                empty = True
+            return mine
+
+        doc_types = _intersect(self.doc_types, other.doc_types)
+        source_types = _intersect(self.source_types, other.source_types)
+        tags = _intersect(self.tags, other.tags)
+        authors = _intersect(self.authors, other.authors)
+        languages = _intersect(self.languages, other.languages)
+        document_ids = _intersect(self.document_ids, other.document_ids)
+        section_prefix = _section()
+
+        # Latest start and earliest end. A crossed range is empty rather than
+        # invalid, so flag it and keep this filter's bounds — handing the inverted
+        # pair to the constructor would raise instead of returning no results.
+        date_from = max(
+            [d for d in (self.date_from, other.date_from) if d is not None],
+            default=None,
+        )
+        date_to = min(
+            [d for d in (self.date_to, other.date_to) if d is not None],
+            default=None,
+        )
+        if date_from is not None and date_to is not None and date_from > date_to:
+            empty = True
+            date_from, date_to = self.date_from, self.date_to
 
         classifications = [
             level
@@ -204,23 +229,18 @@ class MetadataFilter(BaseModel):
             if level is not None
         ]
         return MetadataFilter(
-            doc_types=_intersect(self.doc_types, other.doc_types),
-            source_types=_intersect(self.source_types, other.source_types),
-            tags=_intersect(self.tags, other.tags),
-            authors=_intersect(self.authors, other.authors),
-            languages=_intersect(self.languages, other.languages),
-            document_ids=_intersect(self.document_ids, other.document_ids),
-            section_prefix=_narrower_section(self.section_prefix, other.section_prefix),
-            date_from=max(
-                [d for d in (self.date_from, other.date_from) if d is not None],
-                default=None,
-            ),
-            date_to=min(
-                [d for d in (self.date_to, other.date_to) if d is not None],
-                default=None,
-            ),
+            doc_types=doc_types,
+            source_types=source_types,
+            tags=tags,
+            authors=authors,
+            languages=languages,
+            document_ids=document_ids,
+            section_prefix=section_prefix,
+            date_from=date_from,
+            date_to=date_to,
             max_classification=min(classifications) if classifications else None,
             exclude_pii=self.exclude_pii or other.exclude_pii,
+            unsatisfiable=self.unsatisfiable or other.unsatisfiable or empty,
         )
 
     def fingerprint_payload(self) -> dict[str, Any]:

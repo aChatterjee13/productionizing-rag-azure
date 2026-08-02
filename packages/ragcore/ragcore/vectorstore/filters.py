@@ -146,6 +146,20 @@ def _effective_clearance(principal: Principal, extra: MetadataFilter | None) -> 
     return ceiling
 
 
+def _impossible() -> qm.FieldCondition:
+    """Build a condition no point can satisfy.
+
+    ``classification_rank`` is written onto every chunk by
+    :meth:`ragcore.models.acl.AccessControl.to_flat` and is always 0-3, so requiring
+    it to be negative matches nothing. Expressing it against an indexed integer field
+    means Qdrant answers from the index rather than scanning payloads.
+
+    Returns:
+        The unsatisfiable condition.
+    """
+    return qm.FieldCondition(key="classification_rank", range=qm.Range(lt=0))
+
+
 def _metadata_conditions(extra: MetadataFilter) -> list[qm.Condition]:
     """Translate a :class:`MetadataFilter` into ``must`` conditions.
 
@@ -159,6 +173,11 @@ def _metadata_conditions(extra: MetadataFilter) -> list[qm.Condition]:
         Conditions to AND into the ``must`` list. Empty when nothing is set.
     """
     conditions: list[qm.Condition] = []
+    if extra.unsatisfiable:
+        # Intersecting two filters left a facet with no possible value. Return the
+        # impossible clause alone: the remaining facets cannot narrow it further, and
+        # emitting them would only make the trace harder to read.
+        return [_impossible()]
     if extra.doc_types:
         conditions.append(_match_any("doc_type", extra.doc_types))
     if extra.source_types:

@@ -25,13 +25,15 @@ rewrite that preserves the property passes unchanged.
 from __future__ import annotations
 
 import itertools
+import json
+from collections.abc import Iterator
 from datetime import UTC, datetime
 
 import pytest
 
 from ragcore.models.acl import AccessControl, Classification, Principal
-from ragcore.models.retrieval import UNSATISFIABLE, MetadataFilter
-from ragcore.vectorstore.filters import build_acl_filter
+from ragcore.models.retrieval import MetadataFilter
+from ragcore.vectorstore.filters import build_acl_filter, serialise_filter
 
 TENANT = "t1"
 
@@ -72,6 +74,25 @@ ACLS: tuple[AccessControl, ...] = (
     ),
     AccessControl(tenant_id=TENANT, denied_users=["u1"]),
 )
+
+
+def _strings(node: object) -> Iterator[str]:
+    """Yield every string anywhere in a decoded JSON structure.
+
+    Args:
+        node: A value from :func:`json.loads`.
+
+    Yields:
+        Each string leaf, so a test can assert over all of them at once.
+    """
+    if isinstance(node, str):
+        yield node
+    elif isinstance(node, dict):
+        for value in node.values():
+            yield from _strings(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _strings(value)
 
 
 def _acl_id(acl: AccessControl) -> str:
@@ -221,7 +242,9 @@ class TestMetadataFilterMerge:
         merged = MetadataFilter(**{facet: ["a"]}).merged_with(
             MetadataFilter(**{facet: ["b"]})
         )
-        assert getattr(merged, facet) == [UNSATISFIABLE]
+        assert merged.unsatisfiable is True
+        # The most constraining filter there is, so callers that skip an empty
+        # filter must not skip this one.
         assert not merged.is_empty
 
     @pytest.mark.parametrize("facet", LIST_FACETS)
@@ -246,30 +269,76 @@ class TestMetadataFilterMerge:
         merged = MetadataFilter(**{facet: ["a"]}).merged_with(MetadataFilter())
         assert getattr(merged, facet) == ["a"]
 
-    def test_disjoint_document_ids_keep_the_qdrant_clause(self) -> None:
+    def test_an_unsatisfiable_filter_matches_nothing_in_qdrant(self) -> None:
         """The regression, asserted where it actually mattered.
 
         A dropped facet is invisible in the model but decisive in the filter: without
-        the clause Qdrant returns every document the ACL allows instead of none.
+        a clause Qdrant returns every document the ACL allows instead of none. The
+        filter must carry a condition no chunk can satisfy.
         """
         merged = MetadataFilter(document_ids=["docA"]).merged_with(
             MetadataFilter(document_ids=["docB"])
         )
         qfilter = build_acl_filter(Principal(user_id="u1", tenant_id=TENANT), merged)
-        clauses = [
+        ranks = [
             condition
             for condition in (qfilter.must or [])
-            if getattr(condition, "key", None) == "document_id"
+            if getattr(condition, "key", None) == "classification_rank"
+            and getattr(condition.range, "lt", None) is not None
         ]
-        assert clauses, "document_id clause was dropped from the filter"
-        assert clauses[0].match.any == [UNSATISFIABLE]
+        assert ranks, "unsatisfiable filter carried no impossible clause"
+        # classification_rank is written onto every chunk and is never negative.
+        assert ranks[0].range.lt <= 0
+
+    def test_the_serialised_filter_carries_no_control_characters(self) -> None:
+        """Nothing unprintable may reach the client or a log line.
+
+        ``filter_applied`` is returned in the API response, and a NUL byte would be
+        rejected outright by Postgres ``jsonb``/``text`` if the filter were ever
+        persisted. Flagging the model keeps the impossibility out of the payload.
+        """
+        merged = MetadataFilter(document_ids=["docA"]).merged_with(
+            MetadataFilter(document_ids=["docB"])
+        )
+        qfilter = build_acl_filter(Principal(user_id="u1", tenant_id=TENANT), merged)
+        encoded = json.dumps(serialise_filter(qfilter))
+        offenders = [
+            text
+            for text in _strings(json.loads(encoded))
+            if any(character < " " for character in text)
+        ]
+        assert not offenders, f"control characters reached the client: {offenders}"
 
     def test_disjoint_section_prefixes_are_unsatisfiable(self) -> None:
         """Two different headings name disjoint subtrees, so neither may win."""
         merged = MetadataFilter(section_prefix="A").merged_with(
             MetadataFilter(section_prefix="B")
         )
-        assert merged.section_prefix == UNSATISFIABLE
+        assert merged.unsatisfiable is True
+
+    def test_crossed_date_bounds_are_unsatisfiable_not_an_error(self) -> None:
+        """An empty date range means no results, not a 500.
+
+        The constructor refuses an inverted range, so ``merged_with`` has to notice
+        the crossing itself rather than hand the pair to the validator.
+        """
+        merged = MetadataFilter(date_from=datetime(2024, 6, 1, tzinfo=UTC)).merged_with(
+            MetadataFilter(date_to=datetime(2023, 1, 1, tzinfo=UTC))
+        )
+        assert merged.unsatisfiable is True
+        assert (
+            merged.date_from is None
+            or merged.date_to is None
+            or (merged.date_from <= merged.date_to)
+        )
+
+    def test_unsatisfiable_is_contagious(self) -> None:
+        """Merging an unsatisfiable filter with anything stays unsatisfiable."""
+        impossible = MetadataFilter(doc_types=["a"]).merged_with(
+            MetadataFilter(doc_types=["b"])
+        )
+        assert impossible.merged_with(MetadataFilter(tags=["x"])).unsatisfiable
+        assert MetadataFilter(tags=["x"]).merged_with(impossible).unsatisfiable
 
     def test_identical_section_prefixes_survive(self) -> None:
         """Agreement is not a conflict."""
